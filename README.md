@@ -20,7 +20,13 @@ Terminal sessions that live on a server so you can attach to them from any devic
 brew install --cask pty-server/tap/choux
 ```
 
-Apple Silicon only. Intel Macs get an architecture error from Homebrew instead of a download. The Cask installs a signed and notarized build, so Gatekeeper does not prompt.
+Release candidates track prereleases on a separate channel:
+
+```bash
+brew install --cask pty-server/tap/choux@rc
+```
+
+Apple Silicon only. Intel Macs get an architecture error from Homebrew instead of a download. Both Casks install a signed and notarized build, so Gatekeeper does not prompt. They install the same app and therefore conflict - uninstall one before installing the other.
 
 ### Linux
 

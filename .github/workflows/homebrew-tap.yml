@@ -7,12 +7,12 @@ on:
 jobs:
   update-cask:
     name: Bump choux cask
-    if: github.event.release.prerelease == false
     runs-on: macos-latest
     steps:
-      - name: Resolve version
+      - name: Resolve version and channel
         env:
           TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           case "$TAG" in
             v*) ;;
@@ -20,6 +20,13 @@ jobs:
           esac
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "CASK_TOKEN=choux@rc" >> "$GITHUB_ENV"
+            echo "CASK_FILE=choux@rc.rb" >> "$GITHUB_ENV"
+          else
+            echo "CASK_TOKEN=choux" >> "$GITHUB_ENV"
+            echo "CASK_FILE=choux.rb" >> "$GITHUB_ENV"
+          fi
 
       - name: Download arm64 DMG
         env:
@@ -48,17 +55,17 @@ jobs:
 
       - name: Bump version and checksum
         run: |
-          cask=tap/Casks/choux.rb
+          cask="tap/Casks/$CASK_FILE"
           test -f "$cask" || { echo "::error::$cask not found in tap"; exit 1; }
           sed -i '' -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$cask"
           sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$cask"
           grep -q "version \"$VERSION\"" "$cask" || { echo "::error::version not applied"; exit 1; }
           grep -q "sha256 \"$SHA256\"" "$cask" || { echo "::error::sha256 not applied"; exit 1; }
-          git -C tap --no-pager diff -- Casks/choux.rb
+          git -C tap --no-pager diff -- "Casks/$CASK_FILE"
 
       - name: Verify only version and checksum changed
         run: |
-          changed="$(git -C tap diff --numstat -- Casks/choux.rb | awk '{print $1"/"$2}')"
+          changed="$(git -C tap diff --numstat -- "Casks/$CASK_FILE" | awk '{print $1"/"$2}')"
           case "$changed" in
             ""|"2/2"|"1/1") ;;
             *) echo "::error::unexpected cask diff ($changed lines added/removed)"; exit 1 ;;
@@ -67,16 +74,16 @@ jobs:
       - name: Audit cask
         run: |
           brew tap pty-server/tap
-          cp tap/Casks/choux.rb "$(brew --repository pty-server/tap)/Casks/choux.rb"
-          brew audit --cask --strict --online pty-server/tap/choux
+          cp "tap/Casks/$CASK_FILE" "$(brew --repository pty-server/tap)/Casks/$CASK_FILE"
+          brew audit --cask --strict --online "pty-server/tap/$CASK_TOKEN"
 
       - name: Commit and push
         run: |
-          if git -C tap diff --quiet -- Casks/choux.rb; then
-            echo "cask already at $VERSION"
+          if git -C tap diff --quiet -- "Casks/$CASK_FILE"; then
+            echo "$CASK_TOKEN already at $VERSION"
             exit 0
           fi
           git -C tap config user.name "choux-release"
           git -C tap config user.email "noreply@pty-server.dev"
-          git -C tap commit -m "chore(choux): $VERSION" -- Casks/choux.rb
+          git -C tap commit -m "chore($CASK_TOKEN): $VERSION" -- "Casks/$CASK_FILE"
           git -C tap push
