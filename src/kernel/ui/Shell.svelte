@@ -35,6 +35,8 @@
     settingsOpen: boolean;
     onToggleSettings: () => void;
     onLayoutChange?: () => void;
+    /** accelerator -> commandId */
+    keybindings?: Readonly<Record<string, string>>;
     topBar?: Snippet;
     pane?: Snippet;
   }
@@ -59,6 +61,7 @@
     settingsOpen,
     onToggleSettings,
     onLayoutChange,
+    keybindings = {},
     topBar,
     pane,
   }: Props = $props();
@@ -99,7 +102,7 @@
 
   $effect(() => {
     function handleKeydown(event: KeyboardEvent) {
-      dispatchReservedKeydown(event, registry);
+      dispatchReservedKeydown(event, registry, keybindings);
     }
     window.addEventListener("keydown", handleKeydown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeydown, { capture: true });

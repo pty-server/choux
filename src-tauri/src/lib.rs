@@ -677,6 +677,50 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+#[cfg(desktop)]
+fn toggle_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let in_front = window.is_visible().unwrap_or(false)
+        && !window.is_minimized().unwrap_or(false)
+        && window.is_focused().unwrap_or(false);
+    if in_front {
+        let _ = window.hide();
+    } else {
+        show_main_window(app);
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn global_shortcut_set(app: AppHandle, accelerator: Option<String>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    let shortcuts = app.global_shortcut();
+    shortcuts
+        .unregister_all()
+        .map_err(|_| "Could not release the previous global shortcut.".to_string())?;
+    let Some(accelerator) = accelerator.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    shortcuts
+        .on_shortcut(accelerator.as_str(), |app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                toggle_main_window(app);
+            }
+        })
+        .map_err(|_| {
+            format!("{accelerator} is unavailable - another application may already use it.")
+        })
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn global_shortcut_set(_accelerator: Option<String>) -> Result<(), String> {
+    Err("Global shortcuts are only available on desktop.".into())
+}
+
 fn hide_on_close(window: &Window, event: &WindowEvent) {
     if let WindowEvent::CloseRequested { api, .. } = event {
         api.prevent_close();
@@ -699,6 +743,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }));
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
     builder
@@ -739,6 +784,7 @@ pub fn run() {
             token_get,
             token_set,
             token_delete,
+            global_shortcut_set,
             local_server_candidates,
             local_server_tool,
             local_server_install,

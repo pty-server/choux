@@ -31,7 +31,6 @@
       title: "Open command palette",
       run: () => { open = true; },
     });
-    registry.registerKeybinding("Mod+K", "palette.open");
     registry.registerCommand({
       id: "session.new",
       title: "New session",

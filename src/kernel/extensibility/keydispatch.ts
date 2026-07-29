@@ -1,15 +1,6 @@
-// Reserved-chord key dispatch: intercepts a single global chord (Mod+K) so
-// the command palette opens before xterm.js ever sees the event.
-//
-// Platform mapping:
-// - macOS: physical Cmd+K (metaKey only, no ctrl/alt/shift) -> "Mod+K".
-//   Cmd is never consumed by shell readline bindings, so this is safe.
-// - Linux/Windows: physical Ctrl+Shift+K (ctrl+shift, no meta/alt) -> "Mod+K".
-//   Plain Ctrl+K is deliberately NOT used because it collides with readline's
-//   kill-line, a binding used constantly inside real shells. Ctrl+Shift+K is
-//   not a common shell/terminal binding.
-// - Any other key combo returns undefined (not reserved, passthrough untouched).
-
+// Intercepts the configured chords so a command runs before xterm.js sees the
+// event; every other key passes through to the pty untouched.
+import { acceleratorFromKeyboardEvent } from "../../registry/accelerator";
 import type { KernelRegistry } from "../../registry/types";
 
 export function isMacPlatform(
@@ -25,26 +16,7 @@ export function isMacPlatform(
   );
 }
 
-export function chordForEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
-  isMac: boolean,
-): string | undefined {
-  const key = event.key.toLowerCase();
-
-  if (isMac) {
-    if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === "k") {
-      return "Mod+K";
-    }
-  } else {
-    if (event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey && key === "k") {
-      return "Mod+K";
-    }
-  }
-
-  return undefined;
-}
-
-export type ReservedKeyEvent = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & {
+export type ReservedKeyEvent = Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & {
   preventDefault(): void;
   stopPropagation(): void;
 };
@@ -52,16 +24,18 @@ export type ReservedKeyEvent = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey"
 export function dispatchReservedKeydown(
   event: ReservedKeyEvent,
   registry: KernelRegistry,
-  isMac?: boolean,
+  keybindings: Readonly<Record<string, string>>,
 ): boolean {
-  const mac = isMac ?? isMacPlatform();
-  const chord = chordForEvent(event, mac);
+  const accelerator = acceleratorFromKeyboardEvent(event);
 
-  if (chord === undefined) {
+  if (accelerator === undefined) {
     return false;
   }
 
-  const command = registry.resolveKeybinding(chord);
+  const commandId = keybindings[accelerator];
+  const command = commandId === undefined
+    ? registry.resolveKeybinding(accelerator)
+    : registry.getCommand(commandId);
 
   if (command === undefined) {
     return false;

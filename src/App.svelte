@@ -17,6 +17,12 @@
   import LocalServerDialog from "./features/servers/LocalServerDialog.svelte";
   import SettingsPage from "./features/settings/SettingsPage.svelte";
   import { getTerminalSettings, saveTerminalSettings } from "./kernel/storage/terminalThemeStore";
+  import { getGlobalShortcutSettings, saveGlobalShortcutSettings } from "./kernel/storage/globalShortcutStore";
+  import { applyGlobalShortcut, globalShortcutSupported } from "./kernel/platform/globalShortcut";
+  import { defaultGlobalShortcutSettings, type GlobalShortcutSettings } from "./registry/globalShortcut";
+  import { getKeybindingOverrides, saveKeybindingOverrides } from "./kernel/storage/keybindingStore";
+  import { isMacPlatform } from "./kernel/extensibility/keydispatch";
+  import { keybindingsByAccelerator, resolveKeybindings, type KeybindingOverrides } from "./registry/keybindings";
   import { getLastOpenSession, saveLastOpenSession } from "./kernel/storage/lastSessionStore";
   import { defaultTerminalSettings, type TerminalSettings } from "./registry/terminalTheme";
   import { onMount } from "svelte";
@@ -57,6 +63,9 @@
     ...defaultTerminalSettings,
     theme: { ...defaultTerminalSettings.theme },
   });
+  let globalShortcut = $state<GlobalShortcutSettings>({ ...defaultGlobalShortcutSettings });
+  let keybindingOverrides = $state<KeybindingOverrides>({});
+  let resolvedKeybindings = $derived(resolveKeybindings(keybindingOverrides, isMacPlatform()));
   let restoredLastSession = $state(false);
   let layoutRevision = $state(0);
 
@@ -81,6 +90,9 @@
       try {
         await initializeTokenStore();
         terminalSettings = await getTerminalSettings();
+        globalShortcut = await getGlobalShortcutSettings();
+        if (globalShortcut.enabled) void applyGlobalShortcut(globalShortcut);
+        keybindingOverrides = await getKeybindingOverrides();
         await registry.load();
         await discoverLocalServers();
         const lastSession = await getLastOpenSession();
@@ -373,6 +385,19 @@
     await saveTerminalSettings(settings);
     terminalSettings = { ...settings, theme: { ...settings.theme } };
   }
+
+  async function handleSaveGlobalShortcut(settings: GlobalShortcutSettings): Promise<string | undefined> {
+    const failure = await applyGlobalShortcut(settings);
+    if (failure) return failure;
+    await saveGlobalShortcutSettings(settings);
+    globalShortcut = { ...settings };
+    return undefined;
+  }
+
+  async function handleSaveKeybindings(overrides: KeybindingOverrides): Promise<void> {
+    await saveKeybindingOverrides(overrides);
+    keybindingOverrides = { ...overrides };
+  }
 </script>
 
 <main>
@@ -403,10 +428,21 @@
     {settingsOpen}
     onToggleSettings={() => settingsOpen = !settingsOpen}
     onLayoutChange={() => layoutRevision += 1}
+    keybindings={keybindingsByAccelerator(resolvedKeybindings)}
   >
     {#snippet pane()}
       {#if settingsOpen}
-        <SettingsPage settings={terminalSettings} onSave={handleSaveTerminalSettings} onClose={() => settingsOpen = false} />
+        <SettingsPage
+          settings={terminalSettings}
+          onSave={handleSaveTerminalSettings}
+          onClose={() => settingsOpen = false}
+          {globalShortcut}
+          globalShortcutSupported={globalShortcutSupported()}
+          onSaveGlobalShortcut={handleSaveGlobalShortcut}
+          {keybindingOverrides}
+          isMac={isMacPlatform()}
+          onSaveKeybindings={handleSaveKeybindings}
+        />
       {:else}
         <div class="attach-container" bind:this={mainContainer}>
           {#if focusedSessionId && conn && (resolvedToken || !serverUsesToken(conn.config))}

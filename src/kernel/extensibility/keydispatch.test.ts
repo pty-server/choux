@@ -1,82 +1,118 @@
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { createKernelRegistry } from "./registry.svelte";
-import { chordForEvent, dispatchReservedKeydown, isMacPlatform, type ReservedKeyEvent } from "./keydispatch";
+import { dispatchReservedKeydown, isMacPlatform, type ReservedKeyEvent } from "./keydispatch";
+import { keybindingsByAccelerator, resolveKeybindings } from "../../registry/keybindings";
 
-function fakeEvent(
-  overrides: Partial<Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">> = {},
-): Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> {
-  return { key: "a", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...overrides };
+function makeMockEvent(
+  overrides: Partial<Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">> = {},
+): ReservedKeyEvent & { preventDefault: Mock<() => void>; stopPropagation: Mock<() => void> } {
+  return {
+    code: "KeyA",
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...overrides,
+    preventDefault: vi.fn<() => void>(),
+    stopPropagation: vi.fn<() => void>(),
+  };
 }
 
-describe("chordForEvent", () => {
-  it("mac Cmd+K -> 'Mod+K'", () => {
-    expect(chordForEvent({ key: "k", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, true)).toBe("Mod+K");
-  });
-
-  it("mac Ctrl+K alone -> undefined (must NOT match, proves it does not clobber the mac Ctrl+K-adjacent path)", () => {
-    expect(chordForEvent(fakeEvent({ key: "k", ctrlKey: true }), true)).toBeUndefined();
-  });
-
-  it("non-mac Ctrl+Shift+K -> 'Mod+K'", () => {
-    expect(chordForEvent(fakeEvent({ key: "k", ctrlKey: true, shiftKey: true }), false)).toBe("Mod+K");
-  });
-
-  it("non-mac plain Ctrl+K -> undefined (preserves readline kill-line passthrough)", () => {
-    expect(chordForEvent(fakeEvent({ key: "k", ctrlKey: true }), false)).toBeUndefined();
-  });
-
-  it("unrelated key like plain 'a' -> undefined", () => {
-    expect(chordForEvent(fakeEvent({ key: "a" }), false)).toBeUndefined();
-  });
-
-  it("case-insensitive: 'K' also matches", () => {
-    expect(chordForEvent({ key: "K", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false }, true)).toBe("Mod+K");
-    expect(chordForEvent({ key: "K", ctrlKey: true, shiftKey: true, metaKey: false, altKey: false }, false)).toBe("Mod+K");
-  });
-});
+function registryWith(commandId: string, run: () => void) {
+  const registry = createKernelRegistry();
+  registry.registerCommand({ id: commandId, title: commandId, run });
+  return registry;
+}
 
 describe("dispatchReservedKeydown", () => {
-  function makeMockEvent(
-    overrides: Partial<Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">> = {},
-  ): ReservedKeyEvent & { preventDefault: Mock<() => void>; stopPropagation: Mock<() => void> } {
-    const base = fakeEvent(overrides);
-    return {
-      ...base,
-      preventDefault: vi.fn<() => void>(),
-      stopPropagation: vi.fn<() => void>(),
-    };
-  }
+  it("runs the bound command and stops the event reaching the pty", () => {
+    const run = vi.fn();
+    const registry = registryWith("test.cmd", run);
+    const event = makeMockEvent({ code: "KeyK", ctrlKey: true, shiftKey: true });
 
-  it("reserved chord calls preventDefault, stopPropagation, and command.run", () => {
-    const registry = createKernelRegistry();
-    const runSpy = vi.fn();
-    registry.registerCommand({ id: "test.cmd", title: "Test", run: runSpy });
-    registry.registerKeybinding("Mod+K", "test.cmd");
-
-    const event = makeMockEvent({ key: "k", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false });
-
-    const result = dispatchReservedKeydown(event as unknown as KeyboardEvent, registry, true);
+    const result = dispatchReservedKeydown(event, registry, { "Control+Shift+KeyK": "test.cmd" });
 
     expect(result).toBe(true);
-    expect(runSpy).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
     expect(event.preventDefault).toHaveBeenCalled();
     expect(event.stopPropagation).toHaveBeenCalled();
   });
 
-  it("non-reserved key returns false, does NOT call run/preventDefault/stopPropagation (passthrough-to-pty proof)", () => {
-    const registry = createKernelRegistry();
-    const runSpy = vi.fn();
-    registry.registerCommand({ id: "test.cmd", title: "Test", run: runSpy });
-    registry.registerKeybinding("Mod+K", "test.cmd");
+  it("leaves an unbound chord alone (passthrough-to-pty proof)", () => {
+    const run = vi.fn();
+    const registry = registryWith("test.cmd", run);
+    const event = makeMockEvent({ code: "KeyK", ctrlKey: true });
 
-    const event = makeMockEvent({ key: "k" });
-
-    const result = dispatchReservedKeydown(event as unknown as KeyboardEvent, registry);
+    const result = dispatchReservedKeydown(event, registry, { "Control+Shift+KeyK": "test.cmd" });
 
     expect(result).toBe(false);
-    expect(runSpy).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(event.stopPropagation).not.toHaveBeenCalled();
+  });
+
+  it("does not fire when an extra modifier is held", () => {
+    const run = vi.fn();
+    const registry = registryWith("test.cmd", run);
+
+    const result = dispatchReservedKeydown(
+      makeMockEvent({ code: "KeyK", ctrlKey: true, shiftKey: true, altKey: true }),
+      registry,
+      { "Control+Shift+KeyK": "test.cmd" },
+    );
+
+    expect(result).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("still honours a chord a feature registered straight through the registry", () => {
+    const run = vi.fn();
+    const registry = registryWith("test.cmd", run);
+    registry.registerKeybinding("Control+Alt+KeyJ", "test.cmd");
+
+    const result = dispatchReservedKeydown(
+      makeMockEvent({ code: "KeyJ", ctrlKey: true, altKey: true }),
+      registry,
+      {},
+    );
+
+    expect(result).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a chord whose command was never registered", () => {
+    const registry = createKernelRegistry();
+
+    const result = dispatchReservedKeydown(
+      makeMockEvent({ code: "KeyK", ctrlKey: true, shiftKey: true }),
+      registry,
+      { "Control+Shift+KeyK": "missing.cmd" },
+    );
+
+    expect(result).toBe(false);
+  });
+
+  it("opens the palette on the platform default chord", () => {
+    for (const [isMac, event] of [
+      [true, makeMockEvent({ code: "KeyK", metaKey: true })],
+      [false, makeMockEvent({ code: "KeyK", ctrlKey: true, shiftKey: true })],
+    ] as const) {
+      const run = vi.fn();
+      const registry = registryWith("palette.open", run);
+      const keybindings = keybindingsByAccelerator(resolveKeybindings({}, isMac));
+
+      expect(dispatchReservedKeydown(event, registry, keybindings)).toBe(true);
+      expect(run).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("leaves plain Ctrl+K to readline's kill-line by default", () => {
+    const run = vi.fn();
+    const registry = registryWith("palette.open", run);
+    const keybindings = keybindingsByAccelerator(resolveKeybindings({}, false));
+
+    expect(dispatchReservedKeydown(makeMockEvent({ code: "KeyK", ctrlKey: true }), registry, keybindings)).toBe(false);
+    expect(run).not.toHaveBeenCalled();
   });
 });
 
