@@ -1,0 +1,110 @@
+// Type definitions only - no runes, no implementation. This module exists so
+// both `kernel/**` (which implements the registry, see
+// `../kernel/extensibility/registry.svelte.ts`) and `features/**` (which consume it) can
+// import the same shapes without `features/**` importing from `kernel/**`.
+// `apps/choux/eslint.config.js` blocks `features/**` -> `kernel/**` imports;
+// this directory sits outside that boundary on purpose (CLIENT.md section 2).
+import type { ServerInfo, Session, Workspace } from "@pty-server/protocol";
+import type { ServerConfig } from "../kernel/storage/serverConfigStore";
+
+export interface Command {
+  id: string;
+  title: string;
+  run: () => void;
+}
+
+// A single chrome slot entry (rail button, sidebar panel, status item, pane
+// type). `component` is deliberately typed `unknown` for now - it's a
+// placeholder ref to a Svelte component/snippet; the concrete typing is
+// deferred to the milestone that actually renders these slots (CLIENT.md
+// 13.2 - no pane-type plugin API or session decorators here).
+export interface ChromeSlotItem {
+  id: string;
+  component: unknown;
+  order?: number;
+}
+
+export interface KernelRegistry {
+  registerCommand(command: Command): void;
+  getCommand(id: string): Command | undefined;
+  listCommands(): Command[];
+
+  registerKeybinding(chord: string, commandId: string): void;
+  resolveKeybinding(chord: string): Command | undefined;
+
+  registerRailItem(item: ChromeSlotItem): void;
+  registerSidebarItem(item: ChromeSlotItem): void;
+  registerStatusItem(item: ChromeSlotItem): void;
+  registerPaneType(item: ChromeSlotItem): void;
+
+  readonly railItems: ChromeSlotItem[];
+  readonly sidebarItems: ChromeSlotItem[];
+  readonly statusItems: ChromeSlotItem[];
+  readonly paneTypes: ChromeSlotItem[];
+}
+
+export type ServerStatus = "connecting" | "online" | "offline" | "unauthorized" | "version-mismatch";
+
+export interface ServerConn {
+  readonly config: ServerConfig;
+  readonly status: ServerStatus;
+  /** Non-secret local credential-store failure, if one prevents connecting. */
+  readonly storageError?: string;
+  /** Non-secret explanation of the latest failed server request. */
+  readonly connectionError?: string;
+  readonly info: ServerInfo | undefined;
+  readonly workspaces: Workspace[];
+  readonly sessions: Session[];
+  /** Latest terminal titles received from this server's global event stream. */
+  readonly terminalTitles: Readonly<Record<string, string>>;
+}
+
+/** A Choux-supported `ptys.question` request awaiting a local response. */
+export interface PendingQuestion {
+  readonly id: string;
+  readonly serverId: string;
+  readonly serverLabel: string;
+  readonly sessionId: string;
+  readonly sessionLabel: string;
+  readonly title?: string;
+  readonly message: string;
+  readonly options: readonly QuestionOption[];
+}
+
+export interface QuestionOption {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
+export type QuestionResponse =
+  | { readonly answer: string; readonly note?: string }
+  | { readonly cancelled: true; readonly note?: string };
+
+export type QuestionResponseResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
+
+export type AggregateServerStatus = "online" | "offline" | "degraded";
+
+export interface ServerRegistry {
+  readonly servers: ServerConn[];
+  readonly defaultServerId: string | undefined;
+  readonly aggregateStatus: AggregateServerStatus;
+  /** Ordered globally so only one question dialog is ever visible. */
+  readonly pendingQuestions: readonly PendingQuestion[];
+  get(id: string): ServerConn | undefined;
+  /** Hydrates from persisted config and (re)starts one controller per server. Safe to call more than once (e.g. after Settings changes a server's URL/token) - it tears down existing controllers first. */
+  load(): Promise<void>;
+  addServer(input: { url: string; transport?: "local"; instance?: string; label?: string; token?: string; accent?: string; auth?: "token" | "none"; serverId?: string }): Promise<ServerConn>;
+  /** Adds a server only when its stable identity and normalized URL are both unknown. */
+  ensureServer(input: { url: string; transport?: "local"; instance?: string; label?: string; token?: string; accent?: string; auth?: "token" | "none"; serverId?: string }): Promise<ServerConn>;
+  /** Patches label/accent/url for an existing server; writes a new token only when `patch.token` is non-empty. Reconnects the controller when the url or token changed. */
+  updateServer(id: string, patch: { label?: string; accent?: string; url?: string; token?: string; serverId?: string }): Promise<void>;
+  removeServer(id: string): Promise<void>;
+  setDefault(id: string): Promise<void>;
+  /** Forces an immediate poll for one server and resets its poll interval phase. */
+  refresh(id: string): void;
+  /** Sends the correlated reply and removes the question when it was accepted locally. */
+  answerQuestion(id: string, response: QuestionResponse): QuestionResponseResult;
+}

@@ -1,0 +1,18 @@
+{
+  "description": "Offer Codex permission requests in Choux when Codex runs inside a Ptys session.",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.codex/hooks/choux_permission_request.py",
+            "timeout": 65,
+            "statusMessage": "Waiting for Choux approval"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,148 @@
+name: Release (macOS arm64)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  TARGET: aarch64-apple-darwin
+  BUNDLE_ID: dev.pty-server.choux
+  TEAM_ID: 5AU27XG69A
+
+jobs:
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check tag matches tauri.conf.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          conf="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [ "$tag" != "$conf" ]; then
+            echo "::error::tag v$tag does not match tauri.conf.json version $conf"
+            exit 1
+          fi
+          echo "version $conf"
+
+  build:
+    name: Build, sign and notarize
+    needs: validate
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Check signing secrets are present
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secrets:$missing"
+            exit 1
+          fi
+
+      - name: Write App Store Connect API key
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          key_path="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build and upload to draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Choux ${{ github.ref_name }}
+          releaseDraft: true
+          args: --target aarch64-apple-darwin
+
+      - name: Locate built app
+        run: |
+          bundle="src-tauri/target/$TARGET/release/bundle"
+          app="$bundle/macos/choux.app"
+          test -d "$app" || { echo "::error::$app not found"; exit 1; }
+          echo "BUNDLE_DIR=$bundle" >> "$GITHUB_ENV"
+          echo "APP_PATH=$app" >> "$GITHUB_ENV"
+
+      - name: Verify code signature
+        run: |
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign --display --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Authority|TeamIdentifier'
+
+      - name: Verify signing team
+        run: |
+          got="$(codesign --display --verbose=4 "$APP_PATH" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          if [ "$got" != "$TEAM_ID" ]; then
+            echo "::error::signed by team $got, expected $TEAM_ID"
+            exit 1
+          fi
+          echo "$got"
+
+      - name: Verify Gatekeeper acceptance
+        run: spctl --assess --type execute --verbose=4 "$APP_PATH"
+
+      - name: Verify notarization ticket
+        run: xcrun stapler validate "$APP_PATH"
+
+      - name: Verify bundle identifier
+        run: |
+          got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")"
+          if [ "$got" != "$BUNDLE_ID" ]; then
+            echo "::error::bundle identifier is $got, expected $BUNDLE_ID"
+            exit 1
+          fi
+          echo "$got"
+
+      - name: Verify a single aarch64 DMG
+        run: |
+          shopt -s nullglob
+          dmgs=("$BUNDLE_DIR"/dmg/*.dmg)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one dmg, found ${#dmgs[@]}"
+            exit 1
+          fi
+          case "${dmgs[0]}" in
+            *_aarch64.dmg) echo "${dmgs[0]}" ;;
+            *) echo "::error::dmg is not aarch64: ${dmgs[0]}"; exit 1 ;;
+          esac

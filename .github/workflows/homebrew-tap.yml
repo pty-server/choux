@@ -1,0 +1,81 @@
+name: Update Homebrew tap
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-cask:
+    name: Bump choux cask
+    runs-on: macos-latest
+    steps:
+      - name: Resolve version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::tag $TAG is not vX.Y.Z"; exit 1 ;;
+          esac
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Download arm64 DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          asset="choux_${VERSION}_aarch64.dmg"
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$asset" \
+            --dir .
+          test -f "$asset" || { echo "::error::$asset not in release $TAG"; exit 1; }
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Compute SHA-256
+        run: |
+          sha="$(shasum -a 256 "$ASSET" | cut -d' ' -f1)"
+          echo "SHA256=$sha" >> "$GITHUB_ENV"
+          echo "$sha  $ASSET"
+
+      - name: Checkout tap
+        uses: actions/checkout@v4
+        with:
+          repository: pty-server/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Bump version and checksum
+        run: |
+          cask=tap/Casks/choux.rb
+          test -f "$cask" || { echo "::error::$cask not found in tap"; exit 1; }
+          sed -i '' -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$cask"
+          sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$cask"
+          grep -q "version \"$VERSION\"" "$cask" || { echo "::error::version not applied"; exit 1; }
+          grep -q "sha256 \"$SHA256\"" "$cask" || { echo "::error::sha256 not applied"; exit 1; }
+          git -C tap --no-pager diff -- Casks/choux.rb
+
+      - name: Verify only version and checksum changed
+        run: |
+          changed="$(git -C tap diff --numstat -- Casks/choux.rb | awk '{print $1"/"$2}')"
+          case "$changed" in
+            ""|"2/2"|"1/1") ;;
+            *) echo "::error::unexpected cask diff ($changed lines added/removed)"; exit 1 ;;
+          esac
+
+      - name: Audit cask
+        run: |
+          brew tap pty-server/tap
+          cp tap/Casks/choux.rb "$(brew --repository pty-server/tap)/Casks/choux.rb"
+          brew audit --cask --strict --online pty-server/tap/choux
+
+      - name: Commit and push
+        run: |
+          if git -C tap diff --quiet -- Casks/choux.rb; then
+            echo "cask already at $VERSION"
+            exit 0
+          fi
+          git -C tap config user.name "choux-release"
+          git -C tap config user.email "noreply@pty-server.dev"
+          git -C tap commit -m "chore(choux): $VERSION" -- Casks/choux.rb
+          git -C tap push

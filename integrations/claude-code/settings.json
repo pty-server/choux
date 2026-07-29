@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/choux_permission_request.py",
+            "timeout": 65,
+            "statusMessage": "Waiting for Choux approval"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+# CI is scoped to install, lint, typecheck, unit tests (npm test), and Vite build
+# (npm run build); it explicitly does not run npm run test:integration or
+# npm run tauri:build. The integration suite needs a sibling ptys checkout and a
+# native node-pty build, out of scope here.
+#
+# `npm run typecheck` is plain `tsc --noEmit`: it covers .ts files only. Svelte
+# component bodies are not type-checked (that needs svelte-check, not installed).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential pkg-config libssl-dev libxdo-dev patchelf
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
