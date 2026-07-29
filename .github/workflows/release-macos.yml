@@ -95,6 +95,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Choux ${{ github.ref_name }}
           releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: --target aarch64-apple-darwin
 
       - name: Locate built app
