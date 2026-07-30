@@ -39,6 +39,10 @@ export function createKernelRegistry(): KernelRegistry {
     registerCommand(command) {
       commands.set(command.id, command);
     },
+    // Chords are left alone: `resolveKeybinding` already misses on a gone command.
+    unregisterCommand(id) {
+      commands.delete(id);
+    },
     getCommand(id) {
       return commands.get(id);
     },

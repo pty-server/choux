@@ -15,6 +15,16 @@
     resolveKeybindings,
     type KeybindingOverrides,
   } from "../../registry/keybindings";
+  import {
+    emptyProfileDraft,
+    fromProfileDrafts,
+    normalizeSessionProfiles,
+    sessionProfileDraftError,
+    sessionProfilesEqual,
+    toProfileDrafts,
+    type SessionProfileDraft,
+    type SessionProfiles,
+  } from "../../registry/sessionProfiles";
 
   interface Props {
     settings: TerminalSettings;
@@ -26,6 +36,10 @@
     keybindingOverrides: KeybindingOverrides;
     isMac: boolean;
     onSaveKeybindings: (overrides: KeybindingOverrides) => Promise<void>;
+    sessionProfiles: SessionProfiles;
+    onSaveSessionProfiles: (profiles: SessionProfiles) => Promise<void>;
+    /** Injected because id generation lives in the kernel, which features cannot import. */
+    newProfileId: () => string;
   }
 
   let {
@@ -38,6 +52,9 @@
     keybindingOverrides,
     isMac,
     onSaveKeybindings,
+    sessionProfiles,
+    onSaveSessionProfiles,
+    newProfileId,
   }: Props = $props();
   let draft = $derived<TerminalSettings>({ ...settings, theme: { ...settings.theme } });
   let saving = $state(false);
@@ -108,6 +125,40 @@
       await onSaveKeybindings(bindingDraft);
     } finally {
       bindingsSaving = false;
+    }
+  }
+
+  let profileRows = $derived<SessionProfileDraft[]>(toProfileDrafts(sessionProfiles));
+  let profileDefaultId = $derived(sessionProfiles.defaultProfileId ?? "");
+  let profilesSaving = $state(false);
+
+  let profileErrors = $derived(profileRows.map(sessionProfileDraftError));
+  let profilesDraft = $derived(fromProfileDrafts(profileRows, profileDefaultId || undefined));
+
+  function areProfilesDirty() {
+    return !sessionProfilesEqual(profilesDraft, normalizeSessionProfiles(sessionProfiles));
+  }
+
+  function addProfile() {
+    profileRows = [...profileRows, emptyProfileDraft(newProfileId())];
+  }
+
+  function updateProfile(index: number, patch: Partial<SessionProfileDraft>) {
+    profileRows = profileRows.map((row, i) => (i === index ? { ...row, ...patch } : row));
+  }
+
+  function deleteProfile(index: number) {
+    const removed = profileRows[index];
+    profileRows = profileRows.filter((_, i) => i !== index);
+    if (profileDefaultId === removed.id) profileDefaultId = "";
+  }
+
+  async function saveProfiles() {
+    profilesSaving = true;
+    try {
+      await onSaveSessionProfiles(profilesDraft);
+    } finally {
+      profilesSaving = false;
     }
   }
 
@@ -230,6 +281,66 @@
     {/if}
   </section>
 
+  <section class="settings-card profiles-card">
+    <div class="card-heading">
+      <div>
+        <h2>Session profiles</h2>
+        <p>Reusable commands for new sessions - each one gets a command palette entry. Sessions still start in the selected workspace.</p>
+      </div>
+      <div class="profile-actions">
+        <button type="button" onclick={addProfile}>Add profile</button>
+        <button type="button" class="save" disabled={!areProfilesDirty() || profilesSaving || profileErrors.some(Boolean)} onclick={() => void saveProfiles()}>{profilesSaving ? "Saving…" : "Save profiles"}</button>
+      </div>
+    </div>
+
+    <ul class="profiles">
+      <li class="profile-fallback">
+        <label class="pick-default">
+          <input type="radio" name="default-session-profile" checked={profileDefaultId === ""} onchange={() => (profileDefaultId = "")} />
+          <span>Ask the server for its default shell</span>
+        </label>
+      </li>
+      {#each profileRows as row, index (row.id)}
+        <li class:invalid={profileErrors[index] !== undefined}>
+          <div class="profile-top">
+            <label class="pick-default">
+              <input type="radio" name="default-session-profile" checked={profileDefaultId === row.id} onchange={() => (profileDefaultId = row.id)} />
+              <span>Default</span>
+            </label>
+            <button type="button" onclick={() => deleteProfile(index)}>Delete</button>
+          </div>
+          <div class="profile-fields">
+            <label>
+              <span>Name</span>
+              <input type="text" value={row.name} oninput={(event) => updateProfile(index, { name: event.currentTarget.value })} placeholder="e.g. tmux" />
+            </label>
+            <label>
+              <span>Command</span>
+              <input type="text" value={row.cmd} oninput={(event) => updateProfile(index, { cmd: event.currentTarget.value })} placeholder="Default shell" />
+            </label>
+            <label>
+              <span>Args</span>
+              <input type="text" value={row.argsText} oninput={(event) => updateProfile(index, { argsText: event.currentTarget.value })} placeholder="new-session -A -s main" />
+            </label>
+            <label class="profile-env">
+              <span>Environment</span>
+              <textarea rows="2" value={row.envText} oninput={(event) => updateProfile(index, { envText: event.currentTarget.value })} placeholder="KEY=value, one per line"></textarea>
+            </label>
+          </div>
+          {#if profileErrors[index]}
+            <p class="shortcut-error" role="alert">{profileErrors[index]}</p>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+
+    {#if profileRows.length === 0}
+      <p>No profiles yet. Add one to get a palette entry and an optional default for New session.</p>
+    {:else}
+      <p>Args accept quotes for values with spaces. Environment variables are added on top of the server's.</p>
+    {/if}
+  </section>
+
   <section class="settings-card">
     <div class="card-heading">
       <div>
@@ -310,7 +421,7 @@
   button:hover { border-color: var(--fg-dim); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   .settings-card { padding: var(--sp-4); border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated); }
-  .shortcut-card { margin-bottom: var(--sp-4); }
+  .shortcut-card, .profiles-card { margin-bottom: var(--sp-4); }
   .shortcut-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
   .toggle { grid-template-columns: auto auto; padding: var(--sp-1) var(--sp-2); }
   .toggle input { grid-row: auto; width: auto; height: auto; }
@@ -320,6 +431,24 @@
   .bindings { display: flex; flex-direction: column; gap: var(--sp-1); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
   .bindings li { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
   .bindings li.conflict { border-color: #ff7b72; }
+  .profile-actions { display: flex; gap: var(--sp-1); }
+  .profiles { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-3); padding: 0; list-style: none; }
+  .profiles li { padding: var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
+  .profiles li.invalid { border-color: #ff7b72; }
+  .profiles .profile-fallback { padding: var(--sp-1) var(--sp-2); }
+  .profile-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+  .profile-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
+  .profile-env { grid-column: 1 / -1; }
+  /* The bare `label`/`input` rules below are sized for color swatches. */
+  .profiles label { grid-template-columns: 1fr; align-items: stretch; }
+  .profiles .pick-default { display: flex; align-items: center; gap: var(--sp-1); padding: 0; border: none; }
+  .profiles input[type="radio"] { grid-row: auto; width: auto; height: auto; }
+  .profiles input[type="text"], .profiles textarea {
+    grid-row: auto; width: 100%; height: auto; box-sizing: border-box;
+    padding: var(--sp-1); border: 1px solid var(--border); border-radius: 3px;
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 0.85rem; cursor: auto;
+  }
+  .profiles textarea { resize: vertical; }
   .preset-buttons { display: flex; flex-wrap: wrap; gap: var(--sp-1); justify-content: flex-end; }
   .preview { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-3); padding: var(--sp-3); border-radius: 4px; background: var(--terminal-bg); color: var(--terminal-fg); font-family: "LiterationMono Nerd Font Mono", monospace; }
   .prompt { color: var(--terminal-cursor); }
@@ -334,5 +463,5 @@
   code { color: var(--fg); font-size: 0.72rem; }
   .actions { margin-top: var(--sp-4); }
   .save { background: var(--accent); border-color: var(--accent); color: #fff; }
-  @media (max-width: 700px) { .settings-page { padding: var(--sp-3); } header, .card-heading { align-items: flex-start; flex-direction: column; } .preset-buttons { justify-content: flex-start; } .color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 700px) { .settings-page { padding: var(--sp-3); } header, .card-heading { align-items: flex-start; flex-direction: column; } .preset-buttons { justify-content: flex-start; } .color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .profile-fields { grid-template-columns: minmax(0, 1fr); } }
 </style>

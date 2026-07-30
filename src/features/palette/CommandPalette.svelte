@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Session, Workspace } from "@pty-server/protocol";
   import { useKernelRegistry, useServerRegistry } from "../../registry/context";
+  import { profileCommandId, profileCommandTitle, type SessionProfile } from "../../registry/sessionProfiles";
 
   interface Props {
     sessions: Session[];
@@ -10,9 +11,20 @@
     onSelectWorkspace: (workspaceId: string) => void;
     onNewSession: () => void;
     onAddWorkspace: () => void;
+    sessionProfiles?: SessionProfile[];
+    onLaunchProfile?: (profileId: string) => void;
   }
 
-  let { sessions, selectedServerId, onSelectSession, onSelectWorkspace, onNewSession, onAddWorkspace }: Props = $props();
+  let {
+    sessions,
+    selectedServerId,
+    onSelectSession,
+    onSelectWorkspace,
+    onNewSession,
+    onAddWorkspace,
+    sessionProfiles = [],
+    onLaunchProfile,
+  }: Props = $props();
 
   const registry = useKernelRegistry();
   const serverRegistry = useServerRegistry();
@@ -41,6 +53,20 @@
       title: "Add workspace",
       run: () => { open = false; onAddWorkspace(); },
     });
+  });
+
+  // Profiles change while the app runs, so this registration is reactive and
+  // owns its teardown. It must not read the command map it writes to.
+  $effect(() => {
+    const profileCommands = sessionProfiles.map((profile) => ({
+      id: profileCommandId(profile.id),
+      title: profileCommandTitle(profile),
+      run: () => { open = false; onLaunchProfile?.(profile.id); },
+    }));
+    for (const command of profileCommands) registry.registerCommand(command);
+    return () => {
+      for (const command of profileCommands) registry.unregisterCommand(command.id);
+    };
   });
 
   function titleOfSession(session: Session): string {

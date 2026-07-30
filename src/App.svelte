@@ -23,6 +23,17 @@
   import { getKeybindingOverrides, saveKeybindingOverrides } from "./kernel/storage/keybindingStore";
   import { isMacPlatform } from "./kernel/extensibility/keydispatch";
   import { keybindingsByAccelerator, resolveKeybindings, type KeybindingOverrides } from "./registry/keybindings";
+  import { getSessionProfiles, saveSessionProfiles } from "./kernel/storage/sessionProfileStore";
+  import { randomId } from "./kernel/storage/db";
+  import {
+    cloneSessionProfiles,
+    defaultSessionProfiles,
+    findSessionProfile,
+    normalizeSessionProfiles,
+    profileLaunchInput,
+    resolveDefaultProfile,
+    type SessionProfiles,
+  } from "./registry/sessionProfiles";
   import { getLastOpenSession, saveLastOpenSession } from "./kernel/storage/lastSessionStore";
   import { defaultTerminalSettings, type TerminalSettings } from "./registry/terminalTheme";
   import { onMount } from "svelte";
@@ -65,6 +76,7 @@
   });
   let globalShortcut = $state<GlobalShortcutSettings>({ ...defaultGlobalShortcutSettings });
   let keybindingOverrides = $state<KeybindingOverrides>({});
+  let sessionProfiles = $state<SessionProfiles>(cloneSessionProfiles(defaultSessionProfiles));
   let resolvedKeybindings = $derived(resolveKeybindings(keybindingOverrides, isMacPlatform()));
   let restoredLastSession = $state(false);
   let layoutRevision = $state(0);
@@ -93,6 +105,7 @@
         globalShortcut = await getGlobalShortcutSettings();
         if (globalShortcut.enabled) void applyGlobalShortcut(globalShortcut);
         keybindingOverrides = await getKeybindingOverrides();
+        sessionProfiles = await getSessionProfiles();
         await registry.load();
         await discoverLocalServers();
         const lastSession = await getLastOpenSession();
@@ -175,7 +188,14 @@
     else clearError("token");
   });
 
-  function handleCreate(input: { workspaceId?: string; cmd?: string; args?: string[]; name?: string; serverId: string }) {
+  function handleCreate(input: {
+    workspaceId?: string;
+    cmd?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    name?: string;
+    serverId: string;
+  }) {
     const targetConn = registry.get(input.serverId);
     if (!targetConn || !mainContainer) return;
     const { cols, rows } = measureViewport(mainContainer);
@@ -188,6 +208,7 @@
         workspaceId: input.workspaceId,
         cmd: input.cmd,
         args: input.args,
+        env: input.env,
         cols,
         rows,
         name: input.name,
@@ -206,7 +227,16 @@
 
   function handleStartDefaultSession(serverId = selectedServerId, workspaceId = selectedWorkspaceId) {
     if (!serverId) return;
-    handleCreate({ workspaceId, serverId });
+    // No default profile means no cmd at all, so the server picks its default shell.
+    const profile = resolveDefaultProfile(sessionProfiles);
+    handleCreate({ workspaceId, serverId, ...(profile ? profileLaunchInput(profile) : {}) });
+  }
+
+  function handleLaunchProfile(profileId: string) {
+    if (!selectedServerId) return;
+    const profile = findSessionProfile(sessionProfiles, profileId);
+    if (!profile) return;
+    handleCreate({ workspaceId: selectedWorkspaceId, serverId: selectedServerId, ...profileLaunchInput(profile) });
   }
 
   async function handleRenameSession(sessionId: string, name: string): Promise<void> {
@@ -398,6 +428,11 @@
     await saveKeybindingOverrides(overrides);
     keybindingOverrides = { ...overrides };
   }
+
+  async function handleSaveSessionProfiles(profiles: SessionProfiles): Promise<void> {
+    await saveSessionProfiles(profiles);
+    sessionProfiles = normalizeSessionProfiles(profiles);
+  }
 </script>
 
 <main>
@@ -425,6 +460,8 @@
     onStartDefaultSession={handleStartDefaultSession}
     onNewSession={() => showNewSessionDialog = true}
     onAddWorkspace={openAddWorkspaceDialog}
+    sessionProfiles={sessionProfiles.profiles}
+    onLaunchProfile={handleLaunchProfile}
     {settingsOpen}
     onToggleSettings={() => settingsOpen = !settingsOpen}
     onLayoutChange={() => layoutRevision += 1}
@@ -442,6 +479,9 @@
           {keybindingOverrides}
           isMac={isMacPlatform()}
           onSaveKeybindings={handleSaveKeybindings}
+          {sessionProfiles}
+          onSaveSessionProfiles={handleSaveSessionProfiles}
+          newProfileId={randomId}
         />
       {:else}
         <div class="attach-container" bind:this={mainContainer}>
@@ -482,6 +522,7 @@
     serverId={selectedServerId}
     onClose={() => showNewSessionDialog = false}
     onCreate={handleCreate}
+    profiles={sessionProfiles.profiles}
   />
   <RenameSessionDialog
     open={sessionToRename !== undefined}

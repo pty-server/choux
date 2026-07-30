@@ -23,6 +23,19 @@ describe("createKernelRegistry", () => {
     expect(registry.listCommands()).toHaveLength(2);
   });
 
+  it("forgets an unregistered command, including through its chord", () => {
+    const registry = createKernelRegistry();
+    const command = { id: "cmd.foo", title: "Foo", run: () => {} };
+    registry.registerCommand(command);
+    registry.registerKeybinding("Mod+K", "cmd.foo");
+
+    registry.unregisterCommand("cmd.foo");
+
+    expect(registry.getCommand("cmd.foo")).toBeUndefined();
+    expect(registry.listCommands()).toEqual([]);
+    expect(registry.resolveKeybinding("Mod+K")).toBeUndefined();
+  });
+
   it("registers a keybinding chord and resolves it to the bound command", () => {
     const registry = createKernelRegistry();
     const command = { id: "cmd.foo", title: "Foo", run: () => {} };

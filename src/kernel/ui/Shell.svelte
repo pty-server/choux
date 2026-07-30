@@ -5,6 +5,7 @@
   import { createKernelRegistry } from "../extensibility/registry.svelte";
   import { provideKernelRegistry, useKernelRegistry, useServerRegistry } from "../../registry/context";
   import { dispatchReservedKeydown } from "../extensibility/keydispatch";
+  import type { SessionProfile } from "../../registry/sessionProfiles";
   import { protocolMismatch } from "../transport/protocolVersion";
   import { buildRailModel } from "./railModel";
   import { accentPalette } from "../storage/serverConfigStore";
@@ -32,6 +33,8 @@
     onStartDefaultSession: () => void;
     onNewSession: () => void;
     onAddWorkspace: () => void;
+    sessionProfiles?: SessionProfile[];
+    onLaunchProfile?: (profileId: string) => void;
     settingsOpen: boolean;
     onToggleSettings: () => void;
     onLayoutChange?: () => void;
@@ -58,6 +61,8 @@
     onStartDefaultSession,
     onNewSession,
     onAddWorkspace,
+    sessionProfiles = [],
+    onLaunchProfile,
     settingsOpen,
     onToggleSettings,
     onLayoutChange,
@@ -145,6 +150,8 @@
     }}
     onNewSession={onNewSession}
     onAddWorkspace={onAddWorkspace}
+    {sessionProfiles}
+    {onLaunchProfile}
   />
 
   <ShellTopBar

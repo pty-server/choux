@@ -26,6 +26,8 @@ export interface ChromeSlotItem {
 
 export interface KernelRegistry {
   registerCommand(command: Command): void;
+  /** Needed by features whose command set changes at runtime (e.g. one command per session profile). */
+  unregisterCommand(id: string): void;
   getCommand(id: string): Command | undefined;
   listCommands(): Command[];
 
