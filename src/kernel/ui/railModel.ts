@@ -10,7 +10,6 @@ export interface RailTile {
   serverLabel: string;
   accent: string;
   status: TileStatus;
-  exitBadgeCount: number;
 }
 
 export interface RailGroup {
@@ -40,9 +39,6 @@ export function buildRailModel(servers: ServerConn[]): RailModel {
       serverLabel: server.config.label,
       accent: server.config.accent,
       status: tileStatus(server.status),
-      exitBadgeCount: server.sessions.filter(
-        (session) => session.workspaceId === workspace.id && session.exited !== undefined && session.exited.code !== 0,
-      ).length,
     }));
     return [{ serverId, tiles }];
   });

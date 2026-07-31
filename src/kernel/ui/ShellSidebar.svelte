@@ -4,7 +4,7 @@
   import SessionList from "../../features/sessions/SessionList.svelte";
   import { basename } from "../../registry/basename";
   import { defaultSidebarWidth, maxSidebarWidth, minSidebarWidth } from "../storage/sidebarWidthStore";
-  import type { ChromeSlotItem } from "../../registry/types";
+  import type { ChromeSlotItem, SessionDropPosition } from "../../registry/types";
 
   interface Props {
     selectedWorkspace: Workspace | undefined;
@@ -19,6 +19,8 @@
     onResizeEnd: () => void;
     onSelectSession: (session: Session) => void;
     onRenameSession: (session: Session) => void;
+    onRemoveSession?: (session: Session) => void;
+    onReorderSession?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
     onClose: () => void;
@@ -37,6 +39,8 @@
     onResizeEnd,
     onSelectSession,
     onRenameSession,
+    onRemoveSession,
+    onReorderSession,
     onStartDefaultSession,
     onNewSession,
     onClose,
@@ -92,7 +96,7 @@
       <span class="sidebar-name">{basename(selectedWorkspace.path)}</span>
       <span class="sidebar-path">{selectedWorkspace.realpath}</span>
     </div>
-    <SessionList sessions={mainSessions} {terminalTitles} {sessionExtra} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} />
+    <SessionList sessions={mainSessions} {terminalTitles} {sessionExtra} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} onReorder={onReorderSession} />
     <div class="new-session-control">
       <button type="button" class="new-session" onclick={() => { showNewSessionMenu = false; onStartDefaultSession(); }}>New session</button>
       <button
@@ -113,7 +117,7 @@
     {#if foldedSessions.length > 0}
       <details>
         <summary>Recently exited ({foldedSessions.length})</summary>
-        <SessionList sessions={foldedSessions} {terminalTitles} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} />
+        <SessionList sessions={foldedSessions} {terminalTitles} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} onRemove={onRemoveSession} />
       </details>
     {/if}
     {#each sidebarItems as item (item.id)}

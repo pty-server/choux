@@ -6,9 +6,10 @@
   interface Props {
     session: Session;
     serverId: string;
+    onFocusSession: () => void;
   }
 
-  let { session, serverId }: Props = $props();
+  let { session, serverId, onFocusSession }: Props = $props();
 
   const serverRegistry = useServerRegistry();
   const REFRESH_MS = 15_000;
@@ -47,6 +48,14 @@
     return cachedTmuxSession === undefined ? [] : await listWindows(cachedTmuxSession) ?? [];
   }
 
+  async function selectWindow(window: TmuxWindow): Promise<void> {
+    onFocusSession();
+    if (!execEnabled || cachedTmuxSession === undefined) return;
+    if (await stdoutOrUndefined("tmux", ["select-window", "-t", window.id]) === undefined) return;
+    const listed = await listWindows(cachedTmuxSession);
+    if (listed !== undefined) windows = listed;
+  }
+
   $effect(() => {
     if (!execEnabled) {
       windows = [];
@@ -75,10 +84,12 @@
     {#each windows as window (window.id)}
       {@const detail = windowDetail(window)}
       <li class:active={window.active}>
-        <span class="label">{window.index}: {window.name}</span>
-        {#if detail}
-          <span class="detail" title={detail}>{detail}</span>
-        {/if}
+        <button type="button" class="window" onclick={() => void selectWindow(window)}>
+          <span class="label">{window.index}: {window.name}</span>
+          {#if detail}
+            <span class="detail" title={detail}>{detail}</span>
+          {/if}
+        </button>
       </li>
     {/each}
   </ul>
@@ -94,17 +105,41 @@
   li {
     display: flex;
     min-width: 0;
-    flex-direction: column;
-    gap: 1px;
-    padding: 2px 0 2px var(--sp-2);
     border-left: 2px solid var(--border);
-    font-size: 0.8rem;
-    color: var(--fg-dim);
   }
 
   li.active {
     border-left-color: var(--accent);
+  }
+
+  .window {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
+    padding: 2px 0 2px var(--sp-2);
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 0.8rem;
+    color: var(--fg-dim);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  li.active .window {
     color: var(--fg);
+  }
+
+  .window:hover {
+    background: var(--bg-elevated);
+  }
+
+  .window:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .label,

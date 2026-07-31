@@ -10,6 +10,8 @@
   import { buildRailModel } from "./railModel";
   import { accentPalette } from "../storage/serverConfigStore";
   import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
+  import { getSessionOrder, orderSessions, reorderSessionIds, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
+  import type { SessionDropPosition } from "../../registry/types";
   import ShellTopBar from "./ShellTopBar.svelte";
   import ShellRail from "./ShellRail.svelte";
   import ShellSidebar from "./ShellSidebar.svelte";
@@ -32,6 +34,7 @@
     onSelectWorkspace: (serverId: string, workspaceId: string) => void;
     onSelectSession: (session: Session) => void;
     onRenameSession: (session: Session) => void;
+    onRemoveSession?: (session: Session) => void;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
     onAddWorkspace: () => void;
@@ -60,6 +63,7 @@
     onSelectWorkspace,
     onSelectSession,
     onRenameSession,
+    onRemoveSession,
     onStartDefaultSession,
     onNewSession,
     onAddWorkspace,
@@ -83,11 +87,20 @@
   let railCollapsed = $state(isNarrowViewport);
   let sidebarCollapsed = $state(isNarrowViewport);
   let sidebarWidth = $state(defaultSidebarWidth);
+  let sessionOrder = $state<SessionOrder>({});
 
   $effect(() => {
     let cancelled = false;
     void getSidebarWidth().then((width) => {
       if (!cancelled) sidebarWidth = width;
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  });
+
+  $effect(() => {
+    let cancelled = false;
+    void getSessionOrder().then((order) => {
+      if (!cancelled) sessionOrder = order;
     }).catch(() => {});
     return () => { cancelled = true; };
   });
@@ -141,8 +154,21 @@
       return kb - ka;
     }),
   );
-  let mainSessions = $derived(sortedSessions.filter((session) => session.exited === undefined));
+  let orderScope = $derived(
+    selectedServerId && selectedWorkspaceId ? sessionOrderScope(selectedServerId, selectedWorkspaceId) : undefined,
+  );
+  let mainSessions = $derived(orderSessions(
+    sortedSessions.filter((session) => session.exited === undefined),
+    orderScope ? sessionOrder[orderScope] : undefined,
+  ));
   let foldedSessions = $derived(sortedSessions.filter((session) => session.exited !== undefined));
+
+  function reorderSession(movedSessionId: string, targetSessionId: string, position: SessionDropPosition): void {
+    if (orderScope === undefined) return;
+    const ids = reorderSessionIds(mainSessions.map((session) => session.id), movedSessionId, targetSessionId, position);
+    sessionOrder = { ...sessionOrder, [orderScope]: ids };
+    void saveSessionOrder(sessionOrder).catch(() => {});
+  }
 
   let focusedSession = $derived(
     focusedSessionId ? sessions.find((s) => s.id === focusedSessionId) : undefined,
@@ -161,7 +187,7 @@
 {#snippet sessionExtra(session: Session)}
   {@const view = registry.resolveSessionView({ session, terminalTitle: terminalTitles[session.id] })}
   {#if view && selectedServerId}
-    <view.component {session} serverId={selectedServerId} />
+    <view.component {session} serverId={selectedServerId} onFocusSession={() => onSelectSession(session)} />
   {/if}
 {/snippet}
 
@@ -217,6 +243,8 @@
         onResizeEnd={() => void commitSidebarWidth()}
         {onSelectSession}
         {onRenameSession}
+        {onRemoveSession}
+        onReorderSession={reorderSession}
         {onStartDefaultSession}
         {onNewSession}
         onClose={() => (sidebarCollapsed = true)}

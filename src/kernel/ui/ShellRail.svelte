@@ -46,9 +46,6 @@
       >
         <span class="tile-char">{basename(tile.workspace.path).charAt(0).toUpperCase()}</span>
         <span class="tile-status-dot" data-status={tile.status}></span>
-        {#if tile.exitBadgeCount > 0}
-          <span class="tile-exit-badge">{tile.exitBadgeCount}</span>
-        {/if}
       </button>
     {/each}
   {/each}
@@ -131,23 +128,6 @@
 
   .tile-status-dot[data-status="warn"] {
     background: var(--status-warn);
-  }
-
-  .tile-exit-badge {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-    border-radius: 7px;
-    background: var(--status-offline);
-    color: #fff;
-    font-size: 0.6rem;
-    font-weight: 700;
-    line-height: 14px;
-    text-align: center;
-    z-index: 2;
   }
 
   .add-workspace {

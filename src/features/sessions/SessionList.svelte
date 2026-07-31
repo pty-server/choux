@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { Session } from "@pty-server/protocol";
+  import type { SessionDropPosition } from "../../registry/types";
 
   interface Props {
     sessions: Session[];
@@ -9,12 +10,16 @@
     terminalTitles?: Readonly<Record<string, string>>;
     onSelect?: (session: Session) => void;
     onRename?: (session: Session) => void;
+    onRemove?: (session: Session) => void;
+    onReorder?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     sessionExtra?: Snippet<[Session]>;
   }
 
-  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, onSelect, onRename, sessionExtra }: Props = $props();
-  let sortedSessions = $derived([...sessions].sort((a, b) => sortKey(b) - sortKey(a)));
+  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, onSelect, onRename, onRemove, onReorder, sessionExtra }: Props = $props();
+  let sortedSessions = $derived(onReorder ? sessions : [...sessions].sort((a, b) => sortKey(b) - sortKey(a)));
   let contextMenu = $state<{ session: Session; x: number; y: number } | undefined>(undefined);
+  let draggedSessionId = $state<string | undefined>(undefined);
+  let dropTarget = $state<{ sessionId: string; position: SessionDropPosition } | undefined>(undefined);
 
   function title(session: Session): string {
     const value = session.name || [session.cmd, ...session.args].join(" ");
@@ -26,8 +31,44 @@
     return `Exited with code ${session.exited.code}${session.exited.signal ? `, signal ${session.exited.signal}` : ""}`;
   }
 
+  function startDrag(event: DragEvent, session: Session): void {
+    if (!onReorder) return;
+    draggedSessionId = session.id;
+    event.dataTransfer?.setData("text/plain", session.id);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  }
+
+  function endDrag(): void {
+    draggedSessionId = undefined;
+    dropTarget = undefined;
+  }
+
+  function trackDragOver(event: DragEvent, session: Session): void {
+    if (!onReorder || draggedSessionId === undefined || draggedSessionId === session.id) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    dropTarget = {
+      sessionId: session.id,
+      position: event.clientY < bounds.top + bounds.height / 2 ? "before" : "after",
+    };
+  }
+
+  function finishDrop(event: DragEvent, session: Session): void {
+    if (!onReorder || draggedSessionId === undefined) return;
+    event.preventDefault();
+    const position = dropTarget?.sessionId === session.id ? dropTarget.position : "before";
+    const movedSessionId = draggedSessionId;
+    endDrag();
+    if (movedSessionId !== session.id) onReorder(movedSessionId, session.id, position);
+  }
+
+  function canRemove(session: Session): boolean {
+    return !!onRemove && session.exited !== undefined;
+  }
+
   function openContextMenu(event: MouseEvent, session: Session): void {
-    if (!onRename) return;
+    if (!onRename && !canRemove(session)) return;
     event.preventDefault();
     contextMenu = {
       session,
@@ -41,7 +82,20 @@
 
 <ul>
   {#each sortedSessions as session (session.id)}
-    <li class:clickable={!!onSelect} class:current={session.id === selectedSessionId} oncontextmenu={(event) => openContextMenu(event, session)}>
+    <li
+      class:clickable={!!onSelect}
+      class:current={session.id === selectedSessionId}
+      class:dragged={session.id === draggedSessionId}
+      class:drop-before={dropTarget?.sessionId === session.id && dropTarget.position === "before"}
+      class:drop-after={dropTarget?.sessionId === session.id && dropTarget.position === "after"}
+      draggable={!!onReorder}
+      oncontextmenu={(event) => openContextMenu(event, session)}
+      ondragstart={(event) => startDrag(event, session)}
+      ondragover={(event) => trackDragOver(event, session)}
+      ondragleave={() => { if (dropTarget?.sessionId === session.id) dropTarget = undefined; }}
+      ondrop={(event) => finishDrop(event, session)}
+      ondragend={endDrag}
+    >
       <div class="row">
         <button type="button" class="select" onclick={() => onSelect?.(session)}>
           <span class="session-labels">
@@ -68,7 +122,12 @@
 
 {#if contextMenu}
   <div class="context-menu" role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>
-    <button type="button" role="menuitem" onclick={() => { onRename?.(contextMenu!.session); contextMenu = undefined; }}>Rename session</button>
+    {#if onRename}
+      <button type="button" role="menuitem" onclick={() => { onRename(contextMenu!.session); contextMenu = undefined; }}>Rename session</button>
+    {/if}
+    {#if canRemove(contextMenu.session)}
+      <button type="button" role="menuitem" class="destructive" onclick={() => { onRemove!(contextMenu!.session); contextMenu = undefined; }}>Remove session</button>
+    {/if}
   </div>
 {/if}
 
@@ -88,6 +147,22 @@
   li.current {
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  }
+
+  li[draggable="true"] {
+    cursor: grab;
+  }
+
+  li.dragged {
+    opacity: 0.5;
+  }
+
+  li.drop-before {
+    box-shadow: inset 0 2px 0 0 var(--accent);
+  }
+
+  li.drop-after {
+    box-shadow: inset 0 -2px 0 0 var(--accent);
   }
 
   .row {
@@ -177,5 +252,9 @@
   .context-menu button:hover,
   .context-menu button:focus-visible {
     background: var(--bg);
+  }
+
+  .context-menu button.destructive {
+    color: #e05252;
   }
 </style>

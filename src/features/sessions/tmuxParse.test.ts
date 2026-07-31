@@ -101,8 +101,7 @@ describe("windowDetail", () => {
     expect(windowDetail(window({ command: "", paneTitle: "" }))).toBe("");
   });
 
-  it("drops the active window's detail, which the session row duplicates", () => {
-    expect(windowDetail(window({ active: true, paneTitle: "* detect-session-views" }))).toBe("");
-    expect(windowDetail(window({ active: false, paneTitle: "* detect-session-views" }))).toBe("* detect-session-views");
+  it("keeps the active window's detail, which the session row does not always carry", () => {
+    expect(windowDetail(window({ active: true, paneTitle: "* detect-session-views" }))).toBe("* detect-session-views");
   });
 });

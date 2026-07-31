@@ -36,7 +36,7 @@ export interface SessionViewItem {
   order?: number;
   /** Must stay pure and synchronous - it runs for every visible session on every poll. */
   detect: (context: SessionViewContext) => boolean;
-  component: Component<{ session: Session; serverId: string }>;
+  component: Component<{ session: Session; serverId: string; onFocusSession: () => void }>;
 }
 
 export interface KernelRegistry {
@@ -65,6 +65,8 @@ export interface KernelRegistry {
   readonly paneTypes: ChromeSlotItem[];
   readonly sessionViews: SessionViewItem[];
 }
+
+export type SessionDropPosition = "before" | "after";
 
 export type ServerStatus = "connecting" | "online" | "offline" | "unauthorized" | "version-mismatch";
 

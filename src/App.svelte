@@ -51,7 +51,7 @@
   let tokenStorageError = $derived(conn?.storageError);
   let resolvedToken = $state<string | undefined>(undefined);
   let hasServers = $derived(registry.servers.length > 0);
-  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "deep-link" | "local-discovery";
+  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "deep-link" | "local-discovery";
 
   let error = $state("");
   let errorSource = $state<ErrorSource | undefined>(undefined);
@@ -247,6 +247,22 @@
     if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
     await apiFor(targetConn.config, token).updateSession(sessionId, name);
     registry.refresh(selectedServerId);
+  }
+
+  async function handleRemoveSession(session: Session): Promise<void> {
+    const serverId = selectedServerId;
+    if (!serverId) return;
+    const targetConn = registry.get(serverId);
+    if (!targetConn) return;
+    try {
+      const token = await getServerToken(targetConn.config);
+      if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
+      await apiFor(targetConn.config, token).deleteSession(session.id);
+      if (focusedSessionId === session.id) focusedSessionId = undefined;
+      registry.refresh(serverId);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "session-remove");
+    }
   }
 
   function openAddWorkspaceDialog() {
@@ -457,6 +473,7 @@
       focusedSessionId = session.id;
     }}
     onRenameSession={(session) => sessionToRename = session}
+    onRemoveSession={(session) => void handleRemoveSession(session)}
     onStartDefaultSession={handleStartDefaultSession}
     onNewSession={() => showNewSessionDialog = true}
     onAddWorkspace={openAddWorkspaceDialog}

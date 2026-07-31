@@ -81,6 +81,7 @@
 
   .statusbar-left {
     display: flex;
+    flex: 1;
     align-items: center;
     gap: var(--sp-2);
     min-width: 0;
@@ -90,19 +91,22 @@
     border-left: 3px solid var(--server-accent);
   }
 
+  .statusbar-left > * + *,
+  .statusbar-right > * + * {
+    padding-left: var(--sp-2);
+    border-left: 1px solid var(--border);
+  }
+
   .statusbar-session-id {
+    flex: 0 0 auto;
     color: var(--fg-dim);
     font-size: 0.7rem;
     font-family: monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 16ch;
   }
 
   .statusbar-terminal-title {
     min-width: 0;
-    max-width: 32ch;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -122,6 +126,7 @@
 
   .statusbar-right {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     gap: var(--sp-2);
   }

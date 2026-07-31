@@ -29,10 +29,7 @@ export function sessionNameForTty(stdout: string, tty: string): string | undefin
   return undefined;
 }
 
-// tmux forwards the active pane's title to the outer pty, so the session row
-// already shows it, and it defaults `pane_title` to the command.
 export function windowDetail(window: TmuxWindow): string {
-  if (window.active) return "";
   const detail = (window.paneTitle || window.command).trim();
   return detail.toLowerCase() === window.name.trim().toLowerCase() ? "" : detail;
 }

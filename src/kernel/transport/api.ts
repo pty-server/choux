@@ -96,6 +96,19 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     return response.json() as Promise<T>;
   }
 
+  async function requestEmpty(path: string, method: string): Promise<void> {
+    if (localInstance !== undefined) {
+      const response = await localPtysRequest(localInstance, path, { method, headers });
+      if (response.status < 200 || response.status >= 300) throw new ApiError(response.body || response.statusText, response.status);
+      return;
+    }
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: { ...headers, ...authHeaders },
+    });
+    if (!response.ok) await throwForResponse(response);
+  }
+
   return {
     getInfo: () => request<ServerInfo>("/v1/info"),
     getWorkspaces: () => request<Workspace[]>("/v1/workspaces"),
@@ -112,6 +125,7 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     createWorkspace: (path: string) => requestJson<Workspace>("/v1/workspaces", { path }),
     createSession: (body: CreateSessionBody) => requestJson<Session>("/v1/sessions", body),
     updateSession: (id: string, name: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { name }, "PATCH"),
+    deleteSession: (id: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}`, "DELETE"),
     execSession: (id: string, body: ExecSessionRequest) => requestJson<ExecSessionResponse>(
       `/v1/sessions/${encodeURIComponent(id)}/exec`,
       body,

@@ -38,6 +38,10 @@
 
   function startWindowDrag(event: MouseEvent) {
     if (event.button !== 0) return;
+    if (event.detail === 2) {
+      toggleMaximizeWindow();
+      return;
+    }
     void withCurrentWindow((appWindow) => appWindow.startDragging());
   }
 
@@ -103,7 +107,7 @@
       &#9777;
     </button>
   </div>
-  <span class="window-title">choux</span>
+  <span class="window-title" ondblclick={toggleMaximizeWindow}>choux</span>
   <div class="topbar-content">{@render topBar?.()}</div>
   <div
     class="window-drag-region"

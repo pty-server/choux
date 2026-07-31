@@ -7,22 +7,6 @@ function workspace(id: string): Workspace {
   return { id, path: `/workspaces/${id}`, realpath: `/workspaces/${id}`, createdAt: 1 };
 }
 
-function session(id: string, workspaceId: string, exited?: Session["exited"]): Session {
-  return {
-    id,
-    workspaceId,
-    cmd: "sh",
-    args: [],
-    env: {},
-    cols: 80,
-    rows: 24,
-    createdAt: 1,
-    pid: 100,
-    cwd: `/workspaces/${workspaceId}`,
-    exited,
-  };
-}
-
 function server(id: string, label: string, status: ServerStatus, workspaces: Workspace[], sessions: Session[] = [], accent = "#000"): ServerConn {
   return {
     config: { id, label, accent, url: `http://${id}.test`, tokenRef: `${id}-token` },
@@ -70,20 +54,5 @@ describe("buildRailModel", () => {
     expect(tileStatus("offline")).toBe("offline");
     expect(tileStatus("unauthorized")).toBe("offline");
     expect(tileStatus("version-mismatch")).toBe("offline");
-  });
-
-  it("counts only non-zero exited sessions in each workspace", () => {
-    const model = buildRailModel([
-      server("one", "One", "online", [workspace("a"), workspace("b")], [
-        session("non-zero-one", "a", { code: 1, at: 1 }),
-        session("non-zero-two", "a", { code: 2, at: 1 }),
-        session("zero", "a", { code: 0, at: 1 }),
-        session("live", "a"),
-        session("other-workspace", "b", { code: 3, at: 1 }),
-      ]),
-    ]);
-
-    expect(model.groups[0].tiles[0].exitBadgeCount).toBe(2);
-    expect(model.groups[0].tiles[1].exitBadgeCount).toBe(1);
   });
 });

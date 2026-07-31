@@ -86,6 +86,19 @@ test("choux API client fetches typed CORS API data from a real server", async ()
     const renamed = await client.updateSession(session.id, "renamed client API");
     assert.equal(renamed.name, "renamed client API");
 
+    await client.deleteSession(session.id);
+    const exited = await waitFor(async () => {
+      const current = (await client.getSessions()).find((item) => item.id === session.id);
+      return current?.exited === undefined ? undefined : current;
+    });
+    assert.equal(typeof exited.exited.at, "number");
+
+    await client.deleteSession(session.id);
+    await waitFor(async () => {
+      const current = (await client.getSessions()).find((item) => item.id === session.id);
+      return current === undefined ? true : undefined;
+    });
+
     const cors = await apiFetch(handle.baseUrl, "/v1/info", { token });
     assert.equal(cors.headers.get("access-control-allow-origin"), origin);
 
