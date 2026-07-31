@@ -135,7 +135,16 @@ export interface QuestionOrigin {
   readonly tool?: string;
 }
 
-export type QuestionBlock = QuestionCommandBlock | QuestionFieldsBlock;
+export type QuestionBlock = QuestionCommandBlock | QuestionFieldsBlock | QuestionDiffBlock;
+
+/** A pending change to one file. `before` is empty for freshly written content. */
+export interface QuestionDiffBlock {
+  readonly kind: "diff";
+  readonly before: string;
+  readonly after: string;
+  readonly path?: string;
+  readonly badges?: readonly string[];
+}
 
 export interface QuestionCommandBlock {
   readonly kind: "command";

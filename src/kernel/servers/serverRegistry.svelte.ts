@@ -83,16 +83,32 @@ interface QuestionData {
   origin?: unknown;
 }
 
+function blockBadges(value: unknown): { badges?: string[] } {
+  if (!Array.isArray(value)) return {};
+  const badges = value.filter((badge): badge is string => typeof badge === "string" && badge.length > 0);
+  return badges.length === 0 ? {} : { badges };
+}
+
 function commandBlock(value: Record<string, unknown>): QuestionBlock | undefined {
   if (typeof value.command !== "string" || value.command.length === 0) return undefined;
-  const badges = Array.isArray(value.badges)
-    ? value.badges.filter((badge): badge is string => typeof badge === "string" && badge.length > 0)
-    : [];
   return {
     kind: "command",
     command: value.command,
     ...(typeof value.cwd === "string" && value.cwd.length > 0 ? { cwd: value.cwd } : {}),
-    ...(badges.length === 0 ? {} : { badges }),
+    ...blockBadges(value.badges),
+  };
+}
+
+function diffBlock(value: Record<string, unknown>): QuestionBlock | undefined {
+  const before = typeof value.before === "string" ? value.before : "";
+  const after = typeof value.after === "string" ? value.after : "";
+  if (before.length === 0 && after.length === 0) return undefined;
+  return {
+    kind: "diff",
+    before,
+    after,
+    ...(typeof value.path === "string" && value.path.length > 0 ? { path: value.path } : {}),
+    ...blockBadges(value.badges),
   };
 }
 
@@ -111,12 +127,18 @@ function fieldsBlock(value: Record<string, unknown>): QuestionBlock | undefined 
   };
 }
 
+const blockParsers: Record<string, (value: Record<string, unknown>) => QuestionBlock | undefined> = {
+  command: commandBlock,
+  fields: fieldsBlock,
+  diff: diffBlock,
+};
+
 /** Keeps only the blocks this client knows how to draw, so a sender that grows a new kind still gets its question shown. */
 function questionBlocks(value: unknown[] | undefined): QuestionBlock[] {
   if (value === undefined) return [];
   return value.flatMap((block) => {
-    if (!isEventData(block)) return [];
-    const parsed = block.kind === "command" ? commandBlock(block) : block.kind === "fields" ? fieldsBlock(block) : undefined;
+    if (!isEventData(block) || typeof block.kind !== "string") return [];
+    const parsed = blockParsers[block.kind]?.(block);
     return parsed === undefined ? [] : [parsed];
   });
 }

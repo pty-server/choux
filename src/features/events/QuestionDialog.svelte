@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SvelteDiff from "@humanspeak/svelte-diff";
   import type { PendingQuestion, QuestionResponseResult } from "../../registry/types";
 
   interface Props {
@@ -12,6 +13,7 @@
   let dialog = $state<HTMLDivElement>();
   let now = $state(Date.now());
 
+  const showsDiff = $derived(question?.blocks.some((block) => block.kind === "diff") === true);
   const deadline = $derived(question?.expiresAt);
   const remainingMs = $derived(deadline === undefined ? undefined : Math.max(0, deadline - now));
   const remainingFraction = $derived(
@@ -58,6 +60,7 @@
   <div class="overlay" role="presentation" onclick={() => respond({ cancelled: true })} onkeydown={handleOverlayKeydown}>
     <div
       class="dialog"
+      class:wide={showsDiff}
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="question-title"
@@ -86,6 +89,19 @@
                   {#each block.badges ?? [] as badge (badge)}<span class="badge">{badge}</span>{/each}
                 </header>
                 <pre>{block.command}</pre>
+              {:else if block.kind === "diff"}
+                <header>
+                  <span class="kind">{block.before.length === 0 ? "New content" : "Change"}</span>
+                  {#if block.path}<span class="cwd">{block.path}</span>{/if}
+                  {#each block.badges ?? [] as badge (badge)}<span class="badge">{badge}</span>{/each}
+                </header>
+                <div class="diff">
+                  <SvelteDiff originalText={block.before} modifiedText={block.after} cleanupSemantic>
+                    {#snippet remove(text: string)}<del>{text}</del>{/snippet}
+                    {#snippet insert(text: string)}<ins>{text}</ins>{/snippet}
+                    {#snippet lineBreak()}<br />{/snippet}
+                  </SvelteDiff>
+                </div>
               {:else}
                 <header><span class="kind">{block.title || "Details"}</span></header>
                 <dl>
@@ -127,6 +143,7 @@
 <style>
   .overlay { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: var(--sp-4); background: rgba(0, 0, 0, 0.6); }
   .dialog { box-sizing: border-box; width: min(600px, 100%); max-height: calc(100dvh - 2rem); display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); color: var(--fg); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); overflow: hidden; }
+  .dialog.wide { width: min(960px, 100%); }
   .source { color: var(--fg-dim); font-size: 0.75rem; overflow-wrap: anywhere; }
   h2, p { margin: 0; }
   h2 { font-size: 1rem; }
@@ -138,6 +155,10 @@
   .cwd { flex: 1 1 auto; min-width: 0; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .badge { flex: 0 0 auto; padding: 1px var(--sp-1); color: var(--status-offline); border: 1px solid currentColor; border-radius: 999px; }
   .block pre { margin: 0; padding: var(--sp-2); font: inherit; font-size: 0.85rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .diff { padding: var(--sp-2); font-size: 0.85rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  del, ins { text-decoration: none; border-radius: 2px; }
+  del { color: var(--status-offline); background: color-mix(in srgb, var(--status-offline) 18%, transparent); }
+  ins { color: var(--status-online); background: color-mix(in srgb, var(--status-online) 18%, transparent); }
   dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; padding: var(--sp-2); font-size: 0.85rem; }
   dt { color: var(--fg-dim); }
   dd { margin: 0; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }

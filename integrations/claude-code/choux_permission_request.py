@@ -214,6 +214,52 @@ def fetch_question(tool_input: dict[str, Any], suggestions: list[dict[str, Any]]
     )
 
 
+def diff_question(title: str, message: str, path: str, before: object, after: object, badges: list[str], suggestions: list[dict[str, Any]]) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "kind": "diff",
+        "path": path,
+        "before": preview(before) if isinstance(before, str) else "",
+        "after": preview(after) if isinstance(after, str) else "",
+    }
+    if badges:
+        block["badges"] = badges
+    return {
+        "type": "choux.question",
+        "data": {
+            "title": title,
+            "message": message,
+            "options": [allow_option(), *suggestions, deny_option()],
+            "blocks": [block],
+        },
+    }
+
+
+def edit_question(tool_input: dict[str, Any], description: str | None, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
+    return diff_question(
+        "Change a file",
+        description or "Claude Code wants to change a file.",
+        tool_input["file_path"],
+        tool_input.get("old_string"),
+        tool_input.get("new_string"),
+        ["every occurrence"] if tool_input.get("replace_all") is True else [],
+        suggestions,
+    )
+
+
+def write_question(tool_input: dict[str, Any], description: str | None, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
+    content = tool_input.get("content")
+    lines = len(content.splitlines()) if isinstance(content, str) else 0
+    return diff_question(
+        "Write a file",
+        description or "Claude Code wants to write a file.",
+        tool_input["file_path"],
+        "",
+        content,
+        [f"{lines} lines"] if lines else [],
+        suggestions,
+    )
+
+
 def generic_question(tool_name: object, description: str | None, details: object, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
     parts = [f"Claude Code requests permission to use {tool_name or 'a tool'}."]
     if description:
@@ -254,6 +300,10 @@ def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, lis
         question = generic_question(tool_name, description, details, suggestions)
     elif tool_name == "Bash" and isinstance(command, str) and command.strip():
         question = command_question(command.strip(), description, tool_input, request.get("cwd"), suggestions)
+    elif tool_name == "Edit" and isinstance(tool_input.get("file_path"), str):
+        question = edit_question(tool_input, description, suggestions)
+    elif tool_name == "Write" and isinstance(tool_input.get("file_path"), str):
+        question = write_question(tool_input, description, suggestions)
     elif tool_name == "Read" and isinstance(tool_input.get("file_path"), str):
         question = read_question(tool_input, suggestions)
     elif tool_name == "WebFetch" and isinstance(tool_input.get("url"), str):
