@@ -2,6 +2,7 @@
   import type { Session } from "@pty-server/protocol";
   import { useServerRegistry } from "../../registry/context";
   import { clientsFormat, parseTty, parseWindows, sessionNameForTty, windowDetail, windowsFormat, type TmuxWindow } from "./tmuxParse";
+  import { loadTmuxWindowListing } from "./tmuxWindows";
 
   interface Props {
     session: Session;
@@ -16,7 +17,7 @@
   const EXEC_TIMEOUT_MS = 3000;
 
   let windows = $state<TmuxWindow[]>([]);
-  let cachedTmuxSession: string | undefined;
+  let tmuxSession: string | undefined;
 
   let execEnabled = $derived(
     serverRegistry.get(serverId)?.info?.capabilities?.includes("exec") === true,
@@ -40,19 +41,16 @@
   }
 
   async function loadWindows(): Promise<TmuxWindow[]> {
-    cachedTmuxSession ??= await resolveTmuxSession();
-    if (cachedTmuxSession === undefined) return [];
-    const listed = await listWindows(cachedTmuxSession);
-    if (listed !== undefined) return listed;
-    cachedTmuxSession = await resolveTmuxSession();
-    return cachedTmuxSession === undefined ? [] : await listWindows(cachedTmuxSession) ?? [];
+    const listing = await loadTmuxWindowListing(resolveTmuxSession, listWindows);
+    tmuxSession = listing.session;
+    return listing.windows;
   }
 
   async function selectWindow(window: TmuxWindow): Promise<void> {
     onFocusSession();
-    if (!execEnabled || cachedTmuxSession === undefined) return;
+    if (!execEnabled || tmuxSession === undefined) return;
     if (await stdoutOrUndefined("tmux", ["select-window", "-t", window.id]) === undefined) return;
-    const listed = await listWindows(cachedTmuxSession);
+    const listed = await listWindows(tmuxSession);
     if (listed !== undefined) windows = listed;
   }
 
