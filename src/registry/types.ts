@@ -113,12 +113,27 @@ export interface PendingQuestion {
   readonly options: readonly QuestionOption[];
   /** Whether the dialog offers a free-text note. Requests omitting it get one. */
   readonly notes: boolean;
+  /** Structured detail rendered above the options. Blocks of an unknown kind are dropped, so a newer sender never blanks the dialog on an older client. */
+  readonly blocks: readonly QuestionBlock[];
+  /** Wall-clock deadline for a finite request, so the dialog can count it down. Absent when the sender waits indefinitely. */
+  readonly expiresAt?: number;
+  /** The request's full TTL in milliseconds, which the countdown measures against. */
+  readonly ttlMs?: number;
 }
 
 export interface QuestionOption {
   readonly id: string;
   readonly label: string;
   readonly description?: string;
+}
+
+export type QuestionBlock = QuestionCommandBlock;
+
+export interface QuestionCommandBlock {
+  readonly kind: "command";
+  readonly command: string;
+  readonly cwd?: string;
+  readonly badges?: readonly string[];
 }
 
 export type QuestionResponse =

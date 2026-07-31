@@ -1,9 +1,9 @@
 # Choux agent integrations
 
 These integrations forward agent permission requests to Choux through a Ptys
-`choux.question` event. Select **Allow** or **Deny** in Choux to answer the
-agent. If Ptys is unavailable, the dialog is cancelled, or an integration
-fails, the agent falls back to its own normal permission prompt.
+`choux.question` event. Answer it in Choux to answer the agent. If Ptys is
+unavailable, the dialog is cancelled, or an integration fails, the agent falls
+back to its own normal permission prompt.
 
 Claude Code has a second, optional integration that reports what it is doing as
 a `choux.agent.state` event, so Choux can show a live status next to the right
@@ -51,6 +51,21 @@ cp integrations/claude-code/choux_permission_request.py ~/.claude/hooks/
 
 Start a new Claude Code session. Its `PermissionRequest` hook runs only when
 Claude Code is about to display a native permission dialog.
+
+A `Bash` request is sent as a `command` block, so Choux shows the command in a
+monospace panel with its working directory and a badge when the sandbox is off.
+
+Beyond **Allow once** and **Deny**, the dialog offers whatever Claude Code
+itself suggested in the request's `permission_suggestions` - the same extra
+choices its native prompt would show. An `addRules` suggestion becomes **Allow
+always**, labelled with the rules it writes and where (`Adds Bash(git commit *)
+for this project`); a `setMode` suggestion becomes **Accept edits for this
+session**. The chosen suggestion is returned verbatim as `updatedPermissions`,
+so a compound command is covered per segment rather than by a prefix guessed
+here. Identical suggestions - Claude repeats a group per segment - collapse into
+one option. A request without suggestions simply offers allow and deny.
+
+A note left on **Deny** is passed back as the reason Claude Code is given.
 
 ### Agent status
 

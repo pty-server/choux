@@ -21,6 +21,7 @@ import { agentStateKey, agentStatePane } from "../../registry/agentStateKey";
 import { isAgentStateData, reduceAgentState, sweepAgentStates } from "./agentState";
 import type {
   PendingQuestion,
+  QuestionBlock,
   QuestionOption,
   QuestionResponse,
   ServerConn,
@@ -77,6 +78,30 @@ interface QuestionData {
   message: string;
   options: QuestionOption[];
   notes?: boolean;
+  blocks?: unknown[];
+}
+
+function commandBlock(value: Record<string, unknown>): QuestionBlock | undefined {
+  if (typeof value.command !== "string" || value.command.length === 0) return undefined;
+  const badges = Array.isArray(value.badges)
+    ? value.badges.filter((badge): badge is string => typeof badge === "string" && badge.length > 0)
+    : [];
+  return {
+    kind: "command",
+    command: value.command,
+    ...(typeof value.cwd === "string" && value.cwd.length > 0 ? { cwd: value.cwd } : {}),
+    ...(badges.length === 0 ? {} : { badges }),
+  };
+}
+
+/** Keeps only the blocks this client knows how to draw, so a sender that grows a new kind still gets its question shown. */
+function questionBlocks(value: unknown[] | undefined): QuestionBlock[] {
+  if (value === undefined) return [];
+  return value.flatMap((block) => {
+    if (!isEventData(block) || block.kind !== "command") return [];
+    const parsed = commandBlock(block);
+    return parsed === undefined ? [] : [parsed];
+  });
 }
 
 function isQuestionData(value: unknown): value is QuestionData {
@@ -85,6 +110,7 @@ function isQuestionData(value: unknown): value is QuestionData {
   }
   if (value.title !== undefined && typeof value.title !== "string") return false;
   if (value.notes !== undefined && typeof value.notes !== "boolean") return false;
+  if (value.blocks !== undefined && !Array.isArray(value.blocks)) return false;
 
   const optionIds: string[] = [];
   return value.options.every((option) => {
@@ -251,6 +277,8 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
           message: event.data.message,
           options: event.data.options,
           notes: event.data.notes !== false,
+          blocks: questionBlocks(event.data.blocks),
+          ...(ttl > 0 ? { expiresAt: Date.now() + ttl * 1000, ttlMs: ttl * 1000 } : {}),
         };
         pendingQuestions = [...pendingQuestions, question];
         // Questions are displayed one at a time. Do not ask for attention for a

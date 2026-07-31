@@ -258,6 +258,48 @@ describe("server registry event stream", () => {
     expect(registry.pendingQuestions.map((pending) => pending.notes)).toEqual([false]);
   });
 
+  it("keeps command blocks and drops the ones it cannot draw", async () => {
+    const sockets: MockEventSocket[] = [];
+    const registry = createServerRegistry({
+      createClient: () => clientWith({ sessions: [{ id: "session-1", name: "Agent" }] }),
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 1000,
+    });
+    await registry.addServer({ url: "http://one.test", token: "one", label: "Local" });
+    await settle();
+    const socket = sockets[0];
+    if (!socket) throw new Error("Expected an event socket");
+    socket.readyState = 1;
+
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
+      requestId: "request-1",
+      ttl: 0,
+      event: {
+        sessionId: "session-1",
+        type: "choux.question",
+        data: {
+          message: "Run a command?",
+          options: [{ id: "allow", label: "Allow" }],
+          blocks: [
+            { kind: "command", command: "npm test", cwd: "/w", badges: ["sandbox disabled", 7] },
+            { kind: "command", command: "" },
+            { kind: "diff", patch: "@@" },
+            "npm test",
+          ],
+        },
+      },
+    }) });
+
+    expect(registry.pendingQuestions[0]?.blocks).toEqual([
+      { kind: "command", command: "npm test", cwd: "/w", badges: ["sandbox disabled"] },
+    ]);
+  });
+
   it("removes question requests when their session exits", async () => {
     const sockets: MockEventSocket[] = [];
     const registry = createServerRegistry({
@@ -312,6 +354,8 @@ describe("server registry event stream", () => {
       event: { sessionId: "session-1", type: "choux.question", data: { message: "Continue?", options: [{ id: "yes", label: "Yes" }] } },
     }) });
     expect(registry.pendingQuestions).toHaveLength(1);
+    expect(registry.pendingQuestions[0]?.ttlMs).toBe(10);
+    expect(registry.pendingQuestions[0]?.expiresAt).toBeGreaterThan(Date.now());
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(registry.pendingQuestions).toEqual([]);
   });

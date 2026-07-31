@@ -16,11 +16,32 @@ The event must be a Ptys request event (`request: true`). Its `data` is:
     { "id": "allow-once", "label": "Allow once" },
     { "id": "deny", "label": "Deny", "description": "Do not change any files" }
   ],
-  "notes": true
+  "notes": true,
+  "blocks": [
+    { "kind": "command", "command": "npm test -- --run", "cwd": "/home/you/project", "badges": ["sandbox disabled"] }
+  ]
 }
 ```
 
 `message` must be non-empty. Include at least one option, and give every option a unique, non-empty `id` and `label`. `title` and `description` are optional. Choux renders all fields as plain text.
+
+### Blocks
+
+`blocks` is optional structured detail, drawn between the message and the
+options. Use it instead of pasting the same content into `message` - Choux gives
+each block its own presentation.
+
+| `kind` | Fields | Shown as |
+| --- | --- | --- |
+| `command` | `command` (required), `cwd`, `badges` | The command in a monospace panel, with the working directory and any badges in its header |
+
+Keep `message` a one-line summary when you send blocks; it is the sentence above
+the panel, not a second copy of the payload.
+
+A block whose `kind` this Choux build does not know, or that is missing its
+required field, is dropped - the rest of the question is still shown. A sender
+may therefore emit newer block kinds without checking the client version, but
+must keep `message` meaningful on its own.
 
 `notes` controls the free-text note field. Send `false` to present the options alone, for a request where a note has nowhere to go. It defaults to `true`, so a request that omits it still offers the note.
 
@@ -42,7 +63,7 @@ ptys event --request --timeout 60 '{
 }'
 ```
 
-`--timeout` is in seconds. Use `--timeout 0` to wait indefinitely. Ptys prints the reply event envelope as JSON.
+`--timeout` is in seconds. Use `--timeout 0` to wait indefinitely. Ptys prints the reply event envelope as JSON. A finite timeout arrives as the request's `ttl`, and the dialog counts it down; an unlimited request shows no countdown.
 
 ### Send with `PTYS_EVENT_ENDPOINT`
 
