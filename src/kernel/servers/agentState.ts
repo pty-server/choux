@@ -9,6 +9,7 @@ export interface AgentStateData {
   tool?: string;
   detail?: string;
   message?: string;
+  agentSessionId?: string;
 }
 
 export const AGENT_STATE_TTL_MS = 10 * 60_000;
@@ -27,7 +28,8 @@ export function isAgentStateData(value: unknown): value is AgentStateData {
     && isOptionalString(record.cwd)
     && isOptionalString(record.tool)
     && isOptionalString(record.detail)
-    && isOptionalString(record.message);
+    && isOptionalString(record.message)
+    && isOptionalString(record.agentSessionId);
 }
 
 export function reduceAgentState(

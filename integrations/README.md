@@ -55,17 +55,27 @@ Claude Code is about to display a native permission dialog.
 A `Bash` request is sent as a `command` block, so Choux shows the command in a
 monospace panel with its working directory and a badge when the sandbox is off.
 
-Beyond **Allow once** and **Deny**, the dialog offers whatever Claude Code
-itself suggested in the request's `permission_suggestions` - the same extra
-choices its native prompt would show. An `addRules` suggestion becomes **Allow
-always**, labelled with the rules it writes and where (`Adds Bash(git commit *)
-for this project`); a `setMode` suggestion becomes **Accept edits for this
+Answers keep Claude Code's own yes/no wording rather than an allow/deny one of
+their own. Beyond **Yes** and **No**, the dialog offers whatever Claude Code
+suggested in the request's `permission_suggestions` - the same extra choices its
+native prompt would show. An `addRules` suggestion becomes **Yes, don't ask
+again**, described with the rules it writes and where (`Adds Bash(git commit *)
+for this project`); a `setMode` suggestion becomes **Yes, all edits for this
 session**. The chosen suggestion is returned verbatim as `updatedPermissions`,
 so a compound command is covered per segment rather than by a prefix guessed
 here. Identical suggestions - Claude repeats a group per segment - collapse into
-one option. A request without suggestions simply offers allow and deny.
+one option. A request without suggestions simply offers yes and no.
 
-A note left on **Deny** is passed back as the reason Claude Code is given.
+A note left on **No** is passed back as the reason Claude Code is given.
+
+Claude Code keeps its own approval open next to this one - the IDE integration
+shows a diff for `Edit` and `Write` - and it does not stop the hook when that
+one is answered, so the hook would sit on a dead request for its full minute.
+The question therefore carries `origin.agentSessionId`, and the state reporter
+sends the same id. When Claude Code reports that this run moved on, Choux
+answers the question as cancelled and the hook exits at once. Install both
+integrations to get that; the permission hook alone still works, but a request
+approved in the IDE leaves its Choux dialog up until the timeout.
 
 ### Agent status
 

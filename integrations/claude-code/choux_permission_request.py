@@ -101,10 +101,10 @@ def suggestion_option(update: dict[str, Any], option_id: str) -> dict[str, Any] 
         summary = rules_summary(update)
         if summary is None:
             return None
-        return {"id": option_id, "label": "Allow always", "description": clipped(f"Adds {summary}{scope}")}
+        return {"id": option_id, "label": "Yes, don't ask again", "description": clipped(f"Adds {summary}{scope}")}
     if update.get("type") == "setMode" and isinstance(update.get("mode"), str):
         mode = update["mode"]
-        label = "Accept edits" if mode == "acceptEdits" else f"Switch to {mode}"
+        label = "Yes, all edits" if mode == "acceptEdits" else f"Yes, switch to {mode}"
         return {"id": option_id, "label": f"{label}{scope}", "description": "Later requests of this kind are not asked about"}
     return None
 
@@ -136,12 +136,26 @@ def suggested_options(request: dict[str, Any]) -> tuple[list[dict[str, Any]], di
     return options, updates
 
 
+def origin_for(request: dict[str, Any]) -> dict[str, Any]:
+    """Lets Choux withdraw the question when this same Claude Code run reports it
+    moved on - the request was answered in its IDE dialog instead."""
+    origin: dict[str, Any] = {"agent": "claude-code"}
+    for key, value in (("agentSessionId", request.get("session_id")), ("tool", request.get("tool_name"))):
+        if isinstance(value, str) and value:
+            origin[key] = value
+    return origin
+
+
+def allow_option() -> dict[str, Any]:
+    return {"id": "allow", "label": "Yes"}
+
+
 def deny_option() -> dict[str, Any]:
-    return {"id": "deny", "label": "Deny", "description": "A note becomes the reason Claude Code is given"}
+    return {"id": "deny", "label": "No", "description": "A note becomes the reason Claude Code is given"}
 
 
 def command_question(command: str, description: str | None, tool_input: dict[str, Any], cwd: object, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
-    options = [{"id": "allow", "label": "Allow once"}, *suggestions, deny_option()]
+    options = [allow_option(), *suggestions, deny_option()]
 
     block: dict[str, Any] = {"kind": "command", "command": clipped(command)}
     if isinstance(cwd, str) and cwd:
@@ -178,7 +192,7 @@ def generic_question(tool_name: object, description: str | None, details: object
         "data": {
             "title": "Claude Code permission request",
             "message": "\n".join(parts),
-            "options": [{"id": "allow", "label": "Allow"}, *suggestions, deny_option()],
+            "options": [allow_option(), *suggestions, deny_option()],
         },
     }
 
@@ -196,9 +210,13 @@ def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, lis
         else tool_input
     )
     command = details.get("command") if isinstance(details, dict) else None
-    if tool_name == "Bash" and isinstance(tool_input, dict) and isinstance(command, str) and command.strip():
-        return command_question(command.strip(), description, tool_input, request.get("cwd"), suggestions), updates
-    return generic_question(tool_name, description, details, suggestions), updates
+    question = (
+        command_question(command.strip(), description, tool_input, request.get("cwd"), suggestions)
+        if tool_name == "Bash" and isinstance(tool_input, dict) and isinstance(command, str) and command.strip()
+        else generic_question(tool_name, description, details, suggestions)
+    )
+    question["data"]["origin"] = origin_for(request)
+    return question, updates
 
 
 def claude_decision(decision: dict[str, Any]) -> None:

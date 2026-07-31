@@ -43,6 +43,24 @@ required field, is dropped - the rest of the question is still shown. A sender
 may therefore emit newer block kinds without checking the client version, but
 must keep `message` meaningful on its own.
 
+### Withdrawing a question the sender no longer needs
+
+An agent may offer the same choice in two places at once - Claude Code shows a
+diff in its IDE while its hook asks here. Whichever one is answered, the other
+must stop waiting, and the sending process cannot always say so itself.
+
+Send `origin` with the question to let Choux resolve that:
+
+```json
+{ "agent": "claude-code", "agentSessionId": "0f3c…", "tool": "Write" }
+```
+
+`agent` is required, the rest optional. When a `choux.agent.state` event carries
+the same `agentSessionId` and reports anything other than waiting for approval,
+Choux answers the matching questions with `{ "cancelled": true }` and closes the
+dialog: an agent that has moved on already got its answer elsewhere. Questions
+without an `origin`, and those from other agent runs, are untouched.
+
 `notes` controls the free-text note field. Send `false` to present the options alone, for a request where a note has nowhere to go. It defaults to `true`, so a request that omits it still offers the note.
 
 ### Send with the Ptys CLI

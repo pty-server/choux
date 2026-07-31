@@ -23,6 +23,7 @@ import type {
   PendingQuestion,
   QuestionBlock,
   QuestionOption,
+  QuestionOrigin,
   QuestionResponse,
   ServerConn,
   ServerRegistry,
@@ -79,6 +80,7 @@ interface QuestionData {
   options: QuestionOption[];
   notes?: boolean;
   blocks?: unknown[];
+  origin?: unknown;
 }
 
 function commandBlock(value: Record<string, unknown>): QuestionBlock | undefined {
@@ -102,6 +104,15 @@ function questionBlocks(value: unknown[] | undefined): QuestionBlock[] {
     const parsed = commandBlock(block);
     return parsed === undefined ? [] : [parsed];
   });
+}
+
+function questionOrigin(value: unknown): QuestionOrigin | undefined {
+  if (!isEventData(value) || typeof value.agent !== "string" || value.agent.length === 0) return undefined;
+  return {
+    agent: value.agent,
+    ...(typeof value.agentSessionId === "string" && value.agentSessionId.length > 0 ? { agentSessionId: value.agentSessionId } : {}),
+    ...(typeof value.tool === "string" && value.tool.length > 0 ? { tool: value.tool } : {}),
+  };
 }
 
 function isQuestionData(value: unknown): value is QuestionData {
@@ -202,6 +213,16 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     }
   };
 
+  /** An agent that reports work after asking answered its own question elsewhere - a
+   * permission dialog in its IDE, say. Withdraw ours so the sender stops waiting. */
+  const withdrawAnsweredQuestions = (serverId: string, agentSessionId: string): void => {
+    for (const question of pendingQuestions) {
+      if (question.serverId !== serverId || question.origin?.agentSessionId !== agentSessionId) continue;
+      questionReplies.get(question.id)?.({ cancelled: true });
+      removeQuestion(question.id);
+    }
+  };
+
   function startController(config: ServerConfig): void {
     const conn = $state<MutableServerConn>({
       config,
@@ -256,6 +277,9 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         if (next?.activity === "waiting" && previous?.activity !== "waiting") {
           notifyAttention(event.sessionId, next.pane);
         }
+        if (next?.activity !== "waiting" && event.data.agentSessionId !== undefined) {
+          withdrawAnsweredQuestions(config.id, event.data.agentSessionId);
+        }
         return;
       }
       if (event.type === "choux.question" && requestId !== undefined && ttl !== undefined && isQuestionData(event.data)) {
@@ -267,6 +291,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         const id = `${config.id}:${requestId}`;
         if (pendingQuestions.some((question) => question.id === id)) return;
         const wasEmpty = pendingQuestions.length === 0;
+        const origin = questionOrigin(event.data.origin);
         const question: PendingQuestion = {
           id,
           serverId: config.id,
@@ -278,6 +303,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
           options: event.data.options,
           notes: event.data.notes !== false,
           blocks: questionBlocks(event.data.blocks),
+          ...(origin === undefined ? {} : { origin }),
           ...(ttl > 0 ? { expiresAt: Date.now() + ttl * 1000, ttlMs: ttl * 1000 } : {}),
         };
         pendingQuestions = [...pendingQuestions, question];

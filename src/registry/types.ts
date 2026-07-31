@@ -115,6 +115,8 @@ export interface PendingQuestion {
   readonly notes: boolean;
   /** Structured detail rendered above the options. Blocks of an unknown kind are dropped, so a newer sender never blanks the dialog on an older client. */
   readonly blocks: readonly QuestionBlock[];
+  /** Identifies the agent run that asked, so a `choux.agent.state` report of that run moving on can withdraw the question. */
+  readonly origin?: QuestionOrigin;
   /** Wall-clock deadline for a finite request, so the dialog can count it down. Absent when the sender waits indefinitely. */
   readonly expiresAt?: number;
   /** The request's full TTL in milliseconds, which the countdown measures against. */
@@ -125,6 +127,12 @@ export interface QuestionOption {
   readonly id: string;
   readonly label: string;
   readonly description?: string;
+}
+
+export interface QuestionOrigin {
+  readonly agent: string;
+  readonly agentSessionId?: string;
+  readonly tool?: string;
 }
 
 export type QuestionBlock = QuestionCommandBlock;
