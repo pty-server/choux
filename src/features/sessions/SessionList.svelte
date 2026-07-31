@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { Session } from "@pty-server/protocol";
 
   interface Props {
@@ -8,9 +9,10 @@
     terminalTitles?: Readonly<Record<string, string>>;
     onSelect?: (session: Session) => void;
     onRename?: (session: Session) => void;
+    sessionExtra?: Snippet<[Session]>;
   }
 
-  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, onSelect, onRename }: Props = $props();
+  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, onSelect, onRename, sessionExtra }: Props = $props();
   let sortedSessions = $derived([...sessions].sort((a, b) => sortKey(b) - sortKey(a)));
   let contextMenu = $state<{ session: Session; x: number; y: number } | undefined>(undefined);
 
@@ -57,6 +59,9 @@
           >{session.exited ? "×" : "●"}</span>
         </button>
       </div>
+      {#if sessionExtra}
+        {@render sessionExtra(session)}
+      {/if}
     </li>
   {/each}
 </ul>

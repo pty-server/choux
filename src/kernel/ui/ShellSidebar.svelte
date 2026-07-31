@@ -1,7 +1,9 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { Session, Workspace } from "@pty-server/protocol";
   import SessionList from "../../features/sessions/SessionList.svelte";
-  import { basename } from "./basename";
+  import { basename } from "../../registry/basename";
+  import { defaultSidebarWidth, maxSidebarWidth, minSidebarWidth } from "../storage/sidebarWidthStore";
   import type { ChromeSlotItem } from "../../registry/types";
 
   interface Props {
@@ -11,6 +13,10 @@
     terminalTitles: Readonly<Record<string, string>>;
     focusedSessionId: string | undefined;
     sidebarItems: ChromeSlotItem[];
+    sessionExtra?: Snippet<[Session]>;
+    width: number;
+    onResize: (width: number) => void;
+    onResizeEnd: () => void;
     onSelectSession: (session: Session) => void;
     onRenameSession: (session: Session) => void;
     onStartDefaultSession: () => void;
@@ -25,6 +31,10 @@
     terminalTitles,
     focusedSessionId,
     sidebarItems,
+    sessionExtra,
+    width,
+    onResize,
+    onResizeEnd,
     onSelectSession,
     onRenameSession,
     onStartDefaultSession,
@@ -33,6 +43,40 @@
   }: Props = $props();
 
   let showNewSessionMenu = $state(false);
+  let dragging = $state(false);
+
+  const keyboardStep = 16;
+
+  function startResize(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget as HTMLElement;
+    const startX = event.clientX;
+    const startWidth = width;
+    dragging = true;
+    handle.setPointerCapture(event.pointerId);
+
+    const move = (moved: PointerEvent): void => onResize(startWidth + (moved.clientX - startX));
+    const stop = (): void => {
+      dragging = false;
+      handle.releasePointerCapture(event.pointerId);
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+      onResizeEnd();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  }
+
+  function resizeByKey(event: KeyboardEvent): void {
+    const delta = event.key === "ArrowLeft" ? -keyboardStep : event.key === "ArrowRight" ? keyboardStep : 0;
+    if (delta === 0 && event.key !== "Home") return;
+    event.preventDefault();
+    onResize(event.key === "Home" ? defaultSidebarWidth : width + delta);
+    onResizeEnd();
+  }
 </script>
 
 <button
@@ -41,13 +85,14 @@
   aria-label="Close session sidebar"
   onclick={onClose}
 ></button>
-<div class="sidebar">
-  {#if selectedWorkspace}
+<div class="sidebar" style:width={`${width}px`}>
+  <div class="sidebar-content">
+    {#if selectedWorkspace}
     <div class="sidebar-header">
       <span class="sidebar-name">{basename(selectedWorkspace.path)}</span>
       <span class="sidebar-path">{selectedWorkspace.realpath}</span>
     </div>
-    <SessionList sessions={mainSessions} {terminalTitles} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} />
+    <SessionList sessions={mainSessions} {terminalTitles} {sessionExtra} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} />
     <div class="new-session-control">
       <button type="button" class="new-session" onclick={() => { showNewSessionMenu = false; onStartDefaultSession(); }}>New session</button>
       <button
@@ -74,21 +119,64 @@
     {#each sidebarItems as item (item.id)}
       <div data-slot-item={item.id}></div>
     {/each}
-  {:else}
-    <div class="sidebar-empty">Select a workspace</div>
-  {/if}
+    {:else}
+      <div class="sidebar-empty">Select a workspace</div>
+    {/if}
+  </div>
+  <div
+    class="resize-handle"
+    class:dragging
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize sidebar"
+    aria-valuenow={width}
+    aria-valuemin={minSidebarWidth}
+    aria-valuemax={maxSidebarWidth}
+    tabindex="0"
+    onpointerdown={startResize}
+    onkeydown={resizeByKey}
+    ondblclick={() => { onResize(defaultSidebarWidth); onResizeEnd(); }}
+  ></div>
 </div>
 
 <style>
   .sidebar {
-    width: 260px;
+    position: relative;
     display: flex;
     flex-direction: column;
+    flex: 0 0 auto;
+    max-width: 85vw;
     background: var(--bg);
     border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .sidebar-content {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
     overflow-y: auto;
     padding: var(--sp-2);
     gap: var(--sp-2);
+  }
+
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    z-index: 1;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .resize-handle:hover,
+  .resize-handle:focus-visible,
+  .resize-handle.dragging {
+    background: var(--accent);
+    outline: none;
   }
 
   .sidebar-header {
@@ -222,6 +310,10 @@
       border: none;
       padding: 0;
       background: rgba(0, 0, 0, 0.3);
+    }
+
+    .resize-handle {
+      display: none;
     }
   }
 </style>

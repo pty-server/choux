@@ -1,6 +1,6 @@
 <script lang="ts">
   import { workspaceColor } from "./workspaceColor";
-  import { basename } from "./basename";
+  import { basename } from "../../registry/basename";
   import type { ChromeSlotItem } from "../../registry/types";
   import type { buildRailModel } from "./railModel";
 

@@ -1,4 +1,4 @@
-import type { DirectoryListing, ServerInfo, Session, Workspace } from "@pty-server/protocol";
+import type { DirectoryListing, ExecSessionRequest, ExecSessionResponse, ServerInfo, Session, Workspace } from "@pty-server/protocol";
 import { localPtysRequest } from "./localPtys";
 
 export interface ApiClientConfig {
@@ -112,5 +112,9 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     createWorkspace: (path: string) => requestJson<Workspace>("/v1/workspaces", { path }),
     createSession: (body: CreateSessionBody) => requestJson<Session>("/v1/sessions", body),
     updateSession: (id: string, name: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { name }, "PATCH"),
+    execSession: (id: string, body: ExecSessionRequest) => requestJson<ExecSessionResponse>(
+      `/v1/sessions/${encodeURIComponent(id)}/exec`,
+      body,
+    ),
   };
 }

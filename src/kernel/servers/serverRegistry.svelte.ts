@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, type EventControl, type Session } from "@pty-server/protocol";
+import { PROTOCOL_VERSION, type EventControl, type ExecSessionRequest, type ExecSessionResponse, type Session } from "@pty-server/protocol";
 import { SvelteMap } from "svelte/reactivity";
 import { ApiError, createApiClient, describeConnectionFailure } from "../transport/api";
 import { EventStreamController } from "../transport/events";
@@ -108,6 +108,7 @@ export interface ServerRegistryDeps {
 interface Controller {
   stop(): void;
   refresh(): void;
+  exec(sessionId: string, body: ExecSessionRequest): Promise<ExecSessionResponse>;
 }
 
 type MutableServerConn = {
@@ -323,6 +324,10 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         void poll();
         restartInterval();
       },
+      exec(sessionId, body) {
+        if (stopped || !client) return Promise.reject(new Error("server is not connected"));
+        return client.execSession(sessionId, body);
+      },
     };
     controllers.set(config.id, controller);
 
@@ -454,6 +459,11 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     },
     refresh(id) {
       controllers.get(id)?.refresh();
+    },
+    execSession(serverId, sessionId, body) {
+      const controller = controllers.get(serverId);
+      if (controller === undefined) return Promise.reject(new Error("unknown server"));
+      return controller.exec(sessionId, body);
     },
     answerQuestion(id, response) {
       const question = pendingQuestions.find((candidate) => candidate.id === id);

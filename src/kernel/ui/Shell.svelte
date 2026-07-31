@@ -9,12 +9,14 @@
   import { protocolMismatch } from "../transport/protocolVersion";
   import { buildRailModel } from "./railModel";
   import { accentPalette } from "../storage/serverConfigStore";
+  import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
   import ShellTopBar from "./ShellTopBar.svelte";
   import ShellRail from "./ShellRail.svelte";
   import ShellSidebar from "./ShellSidebar.svelte";
   import ShellStatusBar from "./ShellStatusBar.svelte";
   import ManageServersDialog from "../../features/servers/ManageServersDialog.svelte";
   import QuestionDialog from "../../features/events/QuestionDialog.svelte";
+  import { sessionViews } from "../../features/sessions/sessionViews";
 
   interface Props {
     workspaces: Workspace[];
@@ -80,6 +82,21 @@
   const isNarrowViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
   let railCollapsed = $state(isNarrowViewport);
   let sidebarCollapsed = $state(isNarrowViewport);
+  let sidebarWidth = $state(defaultSidebarWidth);
+
+  $effect(() => {
+    let cancelled = false;
+    void getSidebarWidth().then((width) => {
+      if (!cancelled) sidebarWidth = width;
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  });
+
+  async function commitSidebarWidth() {
+    await tick();
+    onLayoutChange?.();
+    void saveSidebarWidth(sidebarWidth).catch(() => {});
+  }
 
   let showManageServers = $state(false);
   let manageFocusServerId = $state<string | undefined>(undefined);
@@ -92,6 +109,8 @@
   provideKernelRegistry(createKernelRegistry());
   const registry = useKernelRegistry();
   const serverRegistry = useServerRegistry();
+
+  for (const view of sessionViews) registry.registerSessionView(view);
 
   let railModel = $derived(buildRailModel(serverRegistry.servers));
 
@@ -139,6 +158,13 @@
 
 </script>
 
+{#snippet sessionExtra(session: Session)}
+  {@const view = registry.resolveSessionView({ session, terminalTitle: terminalTitles[session.id] })}
+  {#if view && selectedServerId}
+    <view.component {session} serverId={selectedServerId} />
+  {/if}
+{/snippet}
+
 <div class="shell">
   <CommandPalette
     {sessions}
@@ -185,6 +211,10 @@
         {terminalTitles}
         {focusedSessionId}
         sidebarItems={registry.sidebarItems}
+        sessionExtra={selectedServerId ? sessionExtra : undefined}
+        width={sidebarWidth}
+        onResize={(next) => (sidebarWidth = clampSidebarWidth(next))}
+        onResizeEnd={() => void commitSidebarWidth()}
         {onSelectSession}
         {onRenameSession}
         {onStartDefaultSession}

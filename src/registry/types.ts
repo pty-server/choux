@@ -4,7 +4,8 @@
 // import the same shapes without `features/**` importing from `kernel/**`.
 // `apps/choux/eslint.config.js` blocks `features/**` -> `kernel/**` imports;
 // this directory sits outside that boundary on purpose (CLIENT.md section 2).
-import type { ServerInfo, Session, Workspace } from "@pty-server/protocol";
+import type { Component } from "svelte";
+import type { ExecSessionRequest, ExecSessionResponse, ServerInfo, Session, Workspace } from "@pty-server/protocol";
 import type { ServerConfig } from "../kernel/storage/serverConfigStore";
 
 export interface Command {
@@ -24,6 +25,20 @@ export interface ChromeSlotItem {
   order?: number;
 }
 
+export interface SessionViewContext {
+  session: Session;
+  terminalTitle?: string;
+}
+
+/** Sub-rows under a session row, chosen by what is running in the session. */
+export interface SessionViewItem {
+  id: string;
+  order?: number;
+  /** Must stay pure and synchronous - it runs for every visible session on every poll. */
+  detect: (context: SessionViewContext) => boolean;
+  component: Component<{ session: Session; serverId: string }>;
+}
+
 export interface KernelRegistry {
   registerCommand(command: Command): void;
   /** Needed by features whose command set changes at runtime (e.g. one command per session profile). */
@@ -39,10 +54,16 @@ export interface KernelRegistry {
   registerStatusItem(item: ChromeSlotItem): void;
   registerPaneType(item: ChromeSlotItem): void;
 
+  registerSessionView(item: SessionViewItem): void;
+  unregisterSessionView(id: string): void;
+  /** First match in `order` wins. */
+  resolveSessionView(context: SessionViewContext): SessionViewItem | undefined;
+
   readonly railItems: ChromeSlotItem[];
   readonly sidebarItems: ChromeSlotItem[];
   readonly statusItems: ChromeSlotItem[];
   readonly paneTypes: ChromeSlotItem[];
+  readonly sessionViews: SessionViewItem[];
 }
 
 export type ServerStatus = "connecting" | "online" | "offline" | "unauthorized" | "version-mismatch";
@@ -107,6 +128,8 @@ export interface ServerRegistry {
   setDefault(id: string): Promise<void>;
   /** Forces an immediate poll for one server and resets its poll interval phase. */
   refresh(id: string): void;
+  /** Rejects when the server advertises no `exec` capability, so callers must treat failure as "no data", not as an outage. */
+  execSession(serverId: string, sessionId: string, body: ExecSessionRequest): Promise<ExecSessionResponse>;
   /** Sends the correlated reply and removes the question when it was accepted locally. */
   answerQuestion(id: string, response: QuestionResponse): QuestionResponseResult;
 }

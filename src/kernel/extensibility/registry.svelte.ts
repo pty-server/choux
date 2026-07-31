@@ -2,18 +2,18 @@
 // commands, keybindings, and chrome slot items into this at runtime via
 // Svelte context (`../registry/context.ts`) instead of the shell importing
 // feature modules directly. Kept intentionally lean - commands, keybinding
-// chords, and four chrome slot arrays (rail/sidebar/status/pane types) only.
-// A pane-type plugin API and session decorators are explicitly deferred, not
-// built here (CLIENT.md 13.2). The registry itself is private and freely
-// breakable - no versioning or duplicate-registration guards.
+// chords, four chrome slot arrays (rail/sidebar/status/pane types), and
+// session views. A pane-type plugin API is still deferred (CLIENT.md 13.2).
+// The registry itself is private and freely breakable - no versioning or
+// duplicate-registration guards.
 //
 // `.svelte.ts` (not `.ts`) so Svelte 5 rune syntax (`$state`) is compiled -
 // the chrome slot arrays are reactive so shell chrome re-renders when a
 // feature registers into them at runtime.
 import { SvelteMap } from "svelte/reactivity";
-import type { ChromeSlotItem, Command, KernelRegistry } from "../../registry/types";
+import type { ChromeSlotItem, Command, KernelRegistry, SessionViewItem } from "../../registry/types";
 
-function insertOrdered(items: ChromeSlotItem[], item: ChromeSlotItem): void {
+function insertOrdered<T extends { order?: number }>(items: T[], item: T): void {
   if (item.order === undefined) {
     items.push(item);
     return;
@@ -34,6 +34,7 @@ export function createKernelRegistry(): KernelRegistry {
   const sidebarItems = $state<ChromeSlotItem[]>([]);
   const statusItems = $state<ChromeSlotItem[]>([]);
   const paneTypes = $state<ChromeSlotItem[]>([]);
+  const sessionViews = $state<SessionViewItem[]>([]);
 
   return {
     registerCommand(command) {
@@ -72,6 +73,17 @@ export function createKernelRegistry(): KernelRegistry {
       insertOrdered(paneTypes, item);
     },
 
+    registerSessionView(item) {
+      insertOrdered(sessionViews, item);
+    },
+    unregisterSessionView(id) {
+      const index = sessionViews.findIndex((existing) => existing.id === id);
+      if (index !== -1) sessionViews.splice(index, 1);
+    },
+    resolveSessionView(context) {
+      return sessionViews.find((view) => view.detect(context));
+    },
+
     get railItems() {
       return railItems;
     },
@@ -83,6 +95,9 @@ export function createKernelRegistry(): KernelRegistry {
     },
     get paneTypes() {
       return paneTypes;
+    },
+    get sessionViews() {
+      return sessionViews;
     },
   };
 }

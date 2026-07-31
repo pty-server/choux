@@ -17,6 +17,8 @@ function session(id: string, workspaceId: string, exited?: Session["exited"]): S
     cols: 80,
     rows: 24,
     createdAt: 1,
+    pid: 100,
+    cwd: `/workspaces/${workspaceId}`,
     exited,
   };
 }

@@ -1,5 +1,25 @@
+import type { Session } from "@pty-server/protocol";
 import { describe, expect, it } from "vitest";
+import type { SessionViewItem } from "../../registry/types";
 import { createKernelRegistry } from "./registry.svelte";
+
+const stubComponent = (() => {}) as unknown as SessionViewItem["component"];
+
+function session(overrides: Partial<Session> = {}): Session {
+  return {
+    id: "s1",
+    workspaceId: "w1",
+    cmd: "sh",
+    args: [],
+    env: {},
+    cols: 80,
+    rows: 24,
+    createdAt: 1,
+    pid: 100,
+    cwd: "/w",
+    ...overrides,
+  };
+}
 
 describe("createKernelRegistry", () => {
   it("registers a command and resolves it by id", () => {
@@ -59,5 +79,56 @@ describe("createKernelRegistry", () => {
     registry.registerRailItem(item);
 
     expect(registry.railItems).toContainEqual(item);
+  });
+
+  it("resolves the first matching session view in order", () => {
+    const registry = createKernelRegistry();
+    const specific: SessionViewItem = { id: "specific", order: 10, detect: () => true, component: stubComponent };
+    const general: SessionViewItem = { id: "general", order: 20, detect: () => true, component: stubComponent };
+
+    registry.registerSessionView(general);
+    registry.registerSessionView(specific);
+
+    expect(registry.resolveSessionView({ session: session() })).toBe(specific);
+  });
+
+  it("skips a session view whose detector declines", () => {
+    const registry = createKernelRegistry();
+    const declines: SessionViewItem = { id: "no", order: 10, detect: () => false, component: stubComponent };
+    const accepts: SessionViewItem = { id: "yes", order: 20, detect: () => true, component: stubComponent };
+
+    registry.registerSessionView(declines);
+    registry.registerSessionView(accepts);
+
+    expect(registry.resolveSessionView({ session: session() })).toBe(accepts);
+  });
+
+  it("passes the terminal title to detectors", () => {
+    const registry = createKernelRegistry();
+    registry.registerSessionView({
+      id: "titled",
+      detect: (context) => context.terminalTitle === "building",
+      component: stubComponent,
+    });
+
+    expect(registry.resolveSessionView({ session: session(), terminalTitle: "building" })).toBeDefined();
+    expect(registry.resolveSessionView({ session: session() })).toBeUndefined();
+  });
+
+  it("returns undefined when no session view matches", () => {
+    const registry = createKernelRegistry();
+    registry.registerSessionView({ id: "never", detect: () => false, component: stubComponent });
+
+    expect(registry.resolveSessionView({ session: session() })).toBeUndefined();
+  });
+
+  it("forgets an unregistered session view", () => {
+    const registry = createKernelRegistry();
+    registry.registerSessionView({ id: "tmux", detect: () => true, component: stubComponent });
+
+    registry.unregisterSessionView("tmux");
+
+    expect(registry.sessionViews).toEqual([]);
+    expect(registry.resolveSessionView({ session: session() })).toBeUndefined();
   });
 });
