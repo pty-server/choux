@@ -14,7 +14,7 @@ export const sessionViews: SessionViewItem[] = [
   {
     id: "agent",
     order: 20,
-    detect: ({ session }) => detectAgent(session) !== undefined,
+    detect: ({ session, agentState }) => agentState !== undefined || detectAgent(session) !== undefined,
     component: AgentBadge,
   },
 ];

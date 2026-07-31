@@ -164,11 +164,11 @@ describe("server registry polling", () => {
 describe("server registry event stream", () => {
   it("queues Ptys questions globally and replies with an option or note", async () => {
     const sockets: MockEventSocket[] = [];
-    const revealQuestion = vi.fn();
+    const onAttention = vi.fn();
     const client = clientWith({ sessions: [{ id: "session-1", name: "Agent" }, { id: "session-2", name: "Build" }] });
     const registry = createServerRegistry({
       createClient: () => client,
-      revealQuestion,
+      onAttention,
       createEventSocket: () => {
         const socket = new MockEventSocket();
         sockets.push(socket);
@@ -205,7 +205,7 @@ describe("server registry event stream", () => {
 
     expect(registry.pendingQuestions.map((question) => question.message)).toEqual(["Allow changes?", "Run tests?"]);
     expect(registry.pendingQuestions[0]).toMatchObject({ serverId: conn.config.id, serverLabel: "Local", sessionLabel: "Agent", notes: true });
-    expect(revealQuestion).toHaveBeenCalledTimes(1);
+    expect(onAttention).toHaveBeenCalledTimes(1);
     expect(registry.answerQuestion(`${conn.config.id}:request-1`, { answer: "allow", note: "Only this file" })).toEqual({ ok: true });
     expect(registry.answerQuestion(`${conn.config.id}:request-2`, { cancelled: true })).toEqual({ ok: true });
     expect(registry.pendingQuestions).toEqual([]);
@@ -524,5 +524,152 @@ describe("server registry lifecycle", () => {
     const fresh = createServerRegistry({ createClient: () => clientWith(), pollIntervalMs: 1000 });
     await fresh.load();
     expect(fresh.defaultServerId).toBe(second.config.id);
+  });
+});
+
+describe("server registry agent state", () => {
+  function agentRegistry(deps: Parameters<typeof createServerRegistry>[0] = {}) {
+    const sockets: MockEventSocket[] = [];
+    const registry = createServerRegistry({
+      createClient: () => clientWith({ sessions: [{ id: "session-1", name: "Agent" }] }),
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 1000,
+      ...deps,
+    });
+    return { registry, sockets };
+  }
+
+  function stateEvent(data: Record<string, unknown>, sessionId = "session-1"): string {
+    return JSON.stringify({ t: "event", event: { sessionId, type: "choux.agent.state", data } });
+  }
+
+  async function connectedSocket(sockets: MockEventSocket[]): Promise<MockEventSocket> {
+    await settle();
+    const socket = sockets[0];
+    if (!socket) throw new Error("Expected an event socket");
+    socket.readyState = 1;
+    return socket;
+  }
+
+  it("keys pane-scoped agents apart and falls back to the session without a pane", async () => {
+    const { registry, sockets } = agentRegistry();
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "UserPromptSubmit", at: 10, pane: "%3" }) });
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "PreToolUse", at: 11, pane: "%4", tool: "Bash", detail: "npm test" }) });
+    socket.onmessage?.({ data: stateEvent({ agent: "codex", event: "Stop", at: 12 }) });
+
+    const states = registry.get(conn.config.id)?.agentStates ?? {};
+    expect(states["pane:%3"]).toMatchObject({ activity: "busy", agent: "claude-code" });
+    expect(states["pane:%4"]).toMatchObject({ activity: "tool", tool: "Bash", detail: "npm test" });
+    expect(states["session:session-1"]).toMatchObject({ activity: "idle", agent: "codex" });
+  });
+
+  it("ignores a malformed payload and a request-shaped frame", async () => {
+    const { registry, sockets } = agentRegistry();
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Stop" }) });
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
+      requestId: "request-1",
+      ttl: 0,
+      event: { sessionId: "session-1", type: "choux.agent.state", data: { agent: "claude-code", event: "Stop", at: 1 } },
+    }) });
+
+    expect(registry.get(conn.config.id)?.agentStates).toEqual({});
+  });
+
+  it("drops agent state when its session exits", async () => {
+    const { registry, sockets } = agentRegistry();
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Stop", at: 10, pane: "%3" }) });
+    expect(Object.keys(registry.get(conn.config.id)?.agentStates ?? {})).toEqual(["pane:%3"]);
+
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
+      event: { sessionId: "session-1", type: "session.exited", data: { code: 0, at: 1 } },
+    }) });
+
+    expect(registry.get(conn.config.id)?.agentStates).toEqual({});
+  });
+
+  it("reconciles away panes that no longer exist and keeps session-keyed state", async () => {
+    const { registry, sockets } = agentRegistry();
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Stop", at: 10, pane: "%3" }) });
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Stop", at: 10, pane: "%9" }) });
+    socket.onmessage?.({ data: stateEvent({ agent: "codex", event: "Stop", at: 10 }) });
+
+    registry.reconcileAgentPanes(conn.config.id, []);
+    expect(Object.keys(registry.get(conn.config.id)?.agentStates ?? {})).toHaveLength(3);
+
+    registry.reconcileAgentPanes(conn.config.id, ["%3"]);
+    expect(Object.keys(registry.get(conn.config.id)?.agentStates ?? {}).sort()).toEqual(["pane:%3", "session:session-1"]);
+  });
+
+  it("calls for attention once per transition into waiting", async () => {
+    const onAttention = vi.fn();
+    const { registry, sockets } = agentRegistry({ onAttention });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "PermissionRequest", at: 10, pane: "%3", message: "Allow?" }) });
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Notification", at: 11, pane: "%3", message: "Still waiting" }) });
+
+    expect(onAttention).toHaveBeenCalledTimes(1);
+    expect(onAttention).toHaveBeenCalledWith({ serverId: conn.config.id, sessionId: "session-1", pane: "%3" });
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Stop", at: 12, pane: "%3" }) });
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "PermissionRequest", at: 13, pane: "%3" }) });
+
+    expect(onAttention).toHaveBeenCalledTimes(2);
+  });
+
+  it("borrows the waiting pane for a question so the shell can jump to the right window", async () => {
+    const onAttention = vi.fn();
+    const { registry, sockets } = agentRegistry({ onAttention });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "PermissionRequest", at: 10, pane: "%7" }) });
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
+      requestId: "request-1",
+      ttl: 0,
+      event: { sessionId: "session-1", type: "choux.question", data: { message: "Allow?", options: [{ id: "yes", label: "Yes" }] } },
+    }) });
+
+    expect(onAttention).toHaveBeenLastCalledWith({ serverId: conn.config.id, sessionId: "session-1", pane: "%7" });
+  });
+
+  it("declines questions when handling is switched off, without queueing them", async () => {
+    const onAttention = vi.fn();
+    const { registry, sockets } = agentRegistry({ onAttention, questionsEnabled: () => false });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
+      requestId: "request-1",
+      ttl: 0,
+      event: { sessionId: "session-1", type: "choux.question", data: { message: "Allow?", options: [{ id: "yes", label: "Yes" }] } },
+    }) });
+
+    expect(registry.pendingQuestions).toEqual([]);
+    expect(socket.sent.map((message) => JSON.parse(message))).toEqual([
+      { t: "event.reply", requestId: "request-1", event: { type: "choux.question.answer", data: { cancelled: true } } },
+    ]);
+    expect(onAttention).toHaveBeenCalledWith({ serverId: conn.config.id, sessionId: "session-1" });
   });
 });

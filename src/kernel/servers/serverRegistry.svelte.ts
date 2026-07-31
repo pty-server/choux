@@ -5,7 +5,6 @@ import { EventStreamController } from "../transport/events";
 import { localPtysSocket } from "../transport/localPtys";
 import type { EventSocket, EventSocketFactory } from "../transport/events";
 import { protocolMismatch } from "../transport/protocolVersion";
-import { revealAndFocusCurrentWindow } from "../platform/windowAttention";
 import {
   addServer as persistAddServer,
   deleteServer as persistDeleteServer,
@@ -18,6 +17,8 @@ import {
   serverUsesToken,
 } from "../storage/serverConfigStore";
 import { tokenStore } from "../storage/tokenStore";
+import { agentStateKey, agentStatePane } from "../../registry/agentStateKey";
+import { isAgentStateData, reduceAgentState, sweepAgentStates } from "./agentState";
 import type {
   PendingQuestion,
   QuestionOption,
@@ -102,9 +103,15 @@ export interface ServerRegistryDeps {
   createClient?: (config: { baseUrl: string; token?: string; localInstance?: string }) => ReturnType<typeof createApiClient>;
   /** Defaults to the browser WebSocket constructor. Injectable for tests. */
   createEventSocket?: EventSocketFactory;
-  /** Reveals the desktop app when a newly received question becomes visible. */
-  revealQuestion?: () => void | Promise<void>;
+  questionsEnabled?: () => boolean;
+  onAttention?: (target: AttentionTarget) => void;
   pollIntervalMs?: number;
+}
+
+export interface AttentionTarget {
+  serverId: string;
+  sessionId: string;
+  pane?: string;
 }
 
 interface Controller {
@@ -128,7 +135,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       : ((url: string, protocols: string[]) => new WebSocket(url, protocols) as unknown as EventSocket)
   );
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
-  const revealQuestion = deps.revealQuestion ?? revealAndFocusCurrentWindow;
+  const questionsEnabled = deps.questionsEnabled ?? (() => true);
   let pendingQuestions = $state<PendingQuestion[]>([]);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Local connection callbacks are non-reactive bookkeeping.
   const questionReplies = new Map<string, (response: QuestionResponse) => boolean>();
@@ -179,6 +186,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       workspaces: [],
       sessions: [],
       terminalTitles: {},
+      agentStates: {},
     });
     conns.set(config.id, conn);
 
@@ -194,12 +202,42 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       return session?.name || (session ? [session.cmd, ...session.args].join(" ") : sessionId);
     };
 
+    const waitingPane = (sessionId: string): string | undefined => {
+      for (const [key, state] of Object.entries(conn.agentStates)) {
+        if (state.sessionId === sessionId && state.activity === "waiting") return agentStatePane(key);
+      }
+      return undefined;
+    };
+
+    const notifyAttention = (sessionId: string, pane: string | undefined): void => {
+      deps.onAttention?.({ serverId: config.id, sessionId, ...(pane === undefined ? {} : { pane }) });
+    };
+
     const handleEvent = (frame: EventControl): void => {
       if (stopped) return;
       const event = frame.event;
       const requestId = frame.requestId;
       const ttl = frame.ttl;
+      if (event.type === "choux.agent.state" && requestId === undefined && isAgentStateData(event.data)) {
+        const key = agentStateKey(event.sessionId, event.data.pane);
+        const previous = conn.agentStates[key];
+        const next = reduceAgentState(previous, event.sessionId, event.data);
+        if (next === previous) return;
+        const states = { ...conn.agentStates };
+        if (next === undefined) delete states[key];
+        else states[key] = next;
+        conn.agentStates = states;
+        if (next?.activity === "waiting" && previous?.activity !== "waiting") {
+          notifyAttention(event.sessionId, next.pane);
+        }
+        return;
+      }
       if (event.type === "choux.question" && requestId !== undefined && ttl !== undefined && isQuestionData(event.data)) {
+        if (!questionsEnabled()) {
+          eventStream?.reply(requestId, { type: "choux.question.answer", data: { cancelled: true } });
+          notifyAttention(event.sessionId, waitingPane(event.sessionId));
+          return;
+        }
         const id = `${config.id}:${requestId}`;
         if (pendingQuestions.some((question) => question.id === id)) return;
         const wasEmpty = pendingQuestions.length === 0;
@@ -215,9 +253,9 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
           notes: event.data.notes !== false,
         };
         pendingQuestions = [...pendingQuestions, question];
-        // Questions are displayed one at a time. Do not steal focus for a
+        // Questions are displayed one at a time. Do not ask for attention for a
         // later queued question while the user is already answering one.
-        if (wasEmpty) void revealQuestion();
+        if (wasEmpty) notifyAttention(event.sessionId, waitingPane(event.sessionId));
         questionReplies.set(id, (response) => eventStream?.reply(requestId, {
           type: "choux.question.answer",
           data: response,
@@ -248,6 +286,8 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       if (event.type === "session.exited" && isExitedEvent(event.data)) {
         const exited = event.data;
         removeQuestionsForSession(config.id, event.sessionId);
+        const remaining = Object.entries(conn.agentStates).filter(([, state]) => state.sessionId !== event.sessionId);
+        if (remaining.length !== Object.keys(conn.agentStates).length) conn.agentStates = Object.fromEntries(remaining);
         const session = conn.sessions.find((candidate) => candidate.id === event.sessionId);
         if (!session || session.exited?.at === exited.at) return;
         sessionEventRevision += 1;
@@ -270,6 +310,8 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     const poll = async (): Promise<void> => {
       if (stopped || !client || inFlight) return;
       inFlight = true;
+      const swept = sweepAgentStates(conn.agentStates, Date.now());
+      if (swept !== undefined) conn.agentStates = swept;
       const eventRevisionAtStart = sessionEventRevision;
       try {
         const [sessions, workspaces, info] = await Promise.all([
@@ -462,6 +504,15 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     },
     refresh(id) {
       controllers.get(id)?.refresh();
+    },
+    reconcileAgentPanes(serverId, panes) {
+      const conn = conns.get(serverId) as MutableServerConn | undefined;
+      if (conn === undefined || panes.length === 0) return;
+      const kept = Object.entries(conn.agentStates).filter(([key]) => {
+        const pane = agentStatePane(key);
+        return pane === undefined || panes.includes(pane);
+      });
+      if (kept.length !== Object.keys(conn.agentStates).length) conn.agentStates = Object.fromEntries(kept);
     },
     execSession(serverId, sessionId, body) {
       const controller = controllers.get(serverId);

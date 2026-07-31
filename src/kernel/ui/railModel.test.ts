@@ -15,6 +15,7 @@ function server(id: string, label: string, status: ServerStatus, workspaces: Wor
     workspaces,
     sessions,
     terminalTitles: {},
+    agentStates: {},
   };
 }
 

@@ -9,6 +9,7 @@
 
   import { acceleratorFromKeyboardEvent, describeAccelerator } from "../../registry/accelerator";
   import type { GlobalShortcutSettings } from "../../registry/globalShortcut";
+  import { eventSettingsEqual, type EventSettings } from "../../registry/eventSettings";
   import {
     bindableCommands,
     conflictingCommandIds,
@@ -33,6 +34,8 @@
     globalShortcut: GlobalShortcutSettings;
     globalShortcutSupported: boolean;
     onSaveGlobalShortcut: (settings: GlobalShortcutSettings) => Promise<string | undefined>;
+    eventSettings: EventSettings;
+    onSaveEventSettings: (settings: EventSettings) => Promise<void>;
     keybindingOverrides: KeybindingOverrides;
     isMac: boolean;
     onSaveKeybindings: (overrides: KeybindingOverrides) => Promise<void>;
@@ -49,6 +52,8 @@
     globalShortcut,
     globalShortcutSupported,
     onSaveGlobalShortcut,
+    eventSettings,
+    onSaveEventSettings,
     keybindingOverrides,
     isMac,
     onSaveKeybindings,
@@ -85,6 +90,18 @@
       shortcutError = (await onSaveGlobalShortcut(shortcutDraft)) ?? "";
     } finally {
       shortcutSaving = false;
+    }
+  }
+
+  let eventDraft = $derived<EventSettings>({ ...eventSettings });
+  let eventSaving = $state(false);
+
+  async function saveEvents() {
+    eventSaving = true;
+    try {
+      await onSaveEventSettings(eventDraft);
+    } finally {
+      eventSaving = false;
     }
   }
 
@@ -245,6 +262,40 @@
       {/if}
     </section>
   {/if}
+
+  <section class="settings-card shortcut-card">
+    <div class="card-heading">
+      <div>
+        <h2>Events</h2>
+        <p>How Choux reacts to events sent by tools running inside a session.</p>
+      </div>
+      <button type="button" class="save" disabled={eventSettingsEqual(eventDraft, eventSettings) || eventSaving} onclick={() => void saveEvents()}>{eventSaving ? "Saving…" : "Save events"}</button>
+    </div>
+
+    <ul class="events">
+      <li>
+        <label class="toggle">
+          <input type="checkbox" checked={eventDraft.handleQuestions} onchange={(event) => (eventDraft = { ...eventDraft, handleQuestions: event.currentTarget.checked })} />
+          <span>Handle question requests</span>
+        </label>
+        <p>Show question dialogs sent by tools running in a session. When off, Choux declines them and the sender falls back to its own prompt.</p>
+      </li>
+      <li>
+        <label class="toggle">
+          <input type="checkbox" checked={eventDraft.revealWindow} onchange={(event) => (eventDraft = { ...eventDraft, revealWindow: event.currentTarget.checked })} />
+          <span>Bring Choux to the front</span>
+        </label>
+        <p>Reveals and focuses the Choux window when something in a session needs a decision.</p>
+      </li>
+      <li>
+        <label class="toggle">
+          <input type="checkbox" checked={eventDraft.followAttention} onchange={(event) => (eventDraft = { ...eventDraft, followAttention: event.currentTarget.checked })} />
+          <span>Follow sessions asking for input</span>
+        </label>
+        <p>Selects the session that needs a decision, and switches to its tmux window.</p>
+      </li>
+    </ul>
+  </section>
 
   <section class="settings-card shortcut-card">
     <div class="card-heading">
@@ -431,6 +482,9 @@
   .bindings { display: flex; flex-direction: column; gap: var(--sp-1); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
   .bindings li { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
   .bindings li.conflict { border-color: #ff7b72; }
+  .events { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
+  .events li { padding: var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
+  .events p { margin: var(--sp-1) 0 0; }
   .profile-actions { display: flex; gap: var(--sp-1); }
   .profiles { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-3); padding: 0; list-style: none; }
   .profiles li { padding: var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }

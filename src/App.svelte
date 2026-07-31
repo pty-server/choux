@@ -20,6 +20,10 @@
   import { getGlobalShortcutSettings, saveGlobalShortcutSettings } from "./kernel/storage/globalShortcutStore";
   import { applyGlobalShortcut, globalShortcutSupported } from "./kernel/platform/globalShortcut";
   import { defaultGlobalShortcutSettings, type GlobalShortcutSettings } from "./registry/globalShortcut";
+  import { getEventSettings, saveEventSettings } from "./kernel/storage/eventSettingsStore";
+  import { defaultEventSettings, type EventSettings } from "./registry/eventSettings";
+  import { revealAndFocusCurrentWindow } from "./kernel/platform/windowAttention";
+  import type { AttentionTarget } from "./kernel/servers/serverRegistry.svelte";
   import { getKeybindingOverrides, saveKeybindingOverrides } from "./kernel/storage/keybindingStore";
   import { isMacPlatform } from "./kernel/extensibility/keydispatch";
   import { keybindingsByAccelerator, resolveKeybindings, type KeybindingOverrides } from "./registry/keybindings";
@@ -38,7 +42,10 @@
   import { defaultTerminalSettings, type TerminalSettings } from "./registry/terminalTheme";
   import { onMount } from "svelte";
 
-  const registry = createServerRegistry();
+  const registry = createServerRegistry({
+    questionsEnabled: () => eventSettings.handleQuestions,
+    onAttention: (target) => void followAttention(target),
+  });
   provideServerRegistry(registry);
 
   let defaultServerId = $derived(registry.defaultServerId);
@@ -75,6 +82,7 @@
     theme: { ...defaultTerminalSettings.theme },
   });
   let globalShortcut = $state<GlobalShortcutSettings>({ ...defaultGlobalShortcutSettings });
+  let eventSettings = $state<EventSettings>({ ...defaultEventSettings });
   let keybindingOverrides = $state<KeybindingOverrides>({});
   let sessionProfiles = $state<SessionProfiles>(cloneSessionProfiles(defaultSessionProfiles));
   let resolvedKeybindings = $derived(resolveKeybindings(keybindingOverrides, isMacPlatform()));
@@ -104,6 +112,7 @@
         terminalSettings = await getTerminalSettings();
         globalShortcut = await getGlobalShortcutSettings();
         if (globalShortcut.enabled) void applyGlobalShortcut(globalShortcut);
+        eventSettings = await getEventSettings();
         keybindingOverrides = await getKeybindingOverrides();
         sessionProfiles = await getSessionProfiles();
         await registry.load();
@@ -213,9 +222,7 @@
         rows,
         name: input.name,
       }).then((session) => {
-        selectedServerId = input.serverId;
-        selectedWorkspaceId = session.workspaceId;
-        focusedSessionId = session.id;
+        focusSession(input.serverId, session.id, session.workspaceId);
         showNewSessionDialog = false;
         clearError("session-create");
         registry.refresh(input.serverId);
@@ -292,9 +299,26 @@
       showError("This link refers to a server that is not configured in Choux.", "deep-link");
       return;
     }
-    selectedServerId = target.config.id;
-    selectedWorkspaceId = undefined;
-    focusedSessionId = link.sessionId;
+    focusSession(target.config.id, link.sessionId, undefined);
+  }
+
+  function focusSession(serverId: string, sessionId: string, workspaceId: string | undefined) {
+    selectedServerId = serverId;
+    selectedWorkspaceId = workspaceId;
+    focusedSessionId = sessionId;
+  }
+
+  async function followAttention(target: AttentionTarget) {
+    if (eventSettings.revealWindow) await revealAndFocusCurrentWindow();
+    if (!eventSettings.followAttention) return;
+    const targetConn = registry.get(target.serverId);
+    focusSession(target.serverId, target.sessionId, targetConn?.sessions.find((session) => session.id === target.sessionId)?.workspaceId);
+    if (target.pane === undefined || targetConn?.info?.capabilities?.includes("exec") !== true) return;
+    await registry.execSession(target.serverId, target.sessionId, {
+      cmd: "tmux",
+      args: ["select-window", "-t", target.pane, ";", "select-pane", "-t", target.pane],
+      timeoutMs: 3000,
+    }).catch(() => {});
   }
 
   async function handleAddWorkspace(path: string, serverId: string) {
@@ -440,6 +464,11 @@
     return undefined;
   }
 
+  async function handleSaveEventSettings(settings: EventSettings): Promise<void> {
+    await saveEventSettings(settings);
+    eventSettings = { ...settings };
+  }
+
   async function handleSaveKeybindings(overrides: KeybindingOverrides): Promise<void> {
     await saveKeybindingOverrides(overrides);
     keybindingOverrides = { ...overrides };
@@ -493,6 +522,8 @@
           {globalShortcut}
           globalShortcutSupported={globalShortcutSupported()}
           onSaveGlobalShortcut={handleSaveGlobalShortcut}
+          {eventSettings}
+          onSaveEventSettings={handleSaveEventSettings}
           {keybindingOverrides}
           isMac={isMacPlatform()}
           onSaveKeybindings={handleSaveKeybindings}

@@ -12,6 +12,7 @@
   import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
   import { getSessionOrder, orderSessions, reorderSessionIds, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
   import type { SessionDropPosition } from "../../registry/types";
+  import { agentStateKey } from "../../registry/agentStateKey";
   import ShellTopBar from "./ShellTopBar.svelte";
   import ShellRail from "./ShellRail.svelte";
   import ShellSidebar from "./ShellSidebar.svelte";
@@ -185,7 +186,11 @@
 </script>
 
 {#snippet sessionExtra(session: Session)}
-  {@const view = registry.resolveSessionView({ session, terminalTitle: terminalTitles[session.id] })}
+  {@const view = registry.resolveSessionView({
+    session,
+    terminalTitle: terminalTitles[session.id],
+    agentState: selectedServerId ? serverRegistry.get(selectedServerId)?.agentStates[agentStateKey(session.id, undefined)] : undefined,
+  })}
   {#if view && selectedServerId}
     <view.component {session} serverId={selectedServerId} onFocusSession={() => onSelectSession(session)} />
   {/if}

@@ -1,7 +1,11 @@
 <script lang="ts">
   import type { Session } from "@pty-server/protocol";
   import { useServerRegistry } from "../../registry/context";
-  import { clientsFormat, parseTty, parseWindows, sessionNameForTty, windowDetail, windowsFormat, type TmuxWindow } from "./tmuxParse";
+  import { agentStateKey } from "../../registry/agentStateKey";
+  import type { AgentState } from "../../registry/types";
+  import AgentStatusBadge from "./AgentStatusBadge.svelte";
+  import { agentLabelFor } from "./agentDetect";
+  import { clientsFormat, panesFormat, parsePanes, parseTty, parseWindows, sessionNameForTty, windowDetail, windowsFormat, type TmuxPane, type TmuxWindow } from "./tmuxParse";
   import { loadTmuxWindowListing } from "./tmuxWindows";
 
   interface Props {
@@ -17,7 +21,30 @@
   const EXEC_TIMEOUT_MS = 3000;
 
   let windows = $state<TmuxWindow[]>([]);
+  let panes = $state<TmuxPane[]>([]);
   let tmuxSession: string | undefined;
+
+  let agentStates = $derived(serverRegistry.get(serverId)?.agentStates ?? {});
+
+  function panesIn(windowId: string): TmuxPane[] {
+    return panes.filter((pane) => pane.windowId === windowId);
+  }
+
+  function agentStateIn(windowId: string): AgentState | undefined {
+    for (const pane of panesIn(windowId)) {
+      const state = agentStates[agentStateKey(session.id, pane.id)];
+      if (state !== undefined) return state;
+    }
+    return undefined;
+  }
+
+  function agentNameIn(windowId: string): string | undefined {
+    for (const pane of panesIn(windowId)) {
+      const label = agentLabelFor(pane.command);
+      if (label !== undefined) return label;
+    }
+    return undefined;
+  }
 
   let execEnabled = $derived(
     serverRegistry.get(serverId)?.info?.capabilities?.includes("exec") === true,
@@ -46,6 +73,14 @@
     return listing.windows;
   }
 
+  async function loadPanes(): Promise<TmuxPane[]> {
+    const listed = await stdoutOrUndefined("tmux", ["list-panes", "-a", "-F", panesFormat]);
+    if (listed === undefined) return panes;
+    const parsed = parsePanes(listed);
+    serverRegistry.reconcileAgentPanes(serverId, parsed.map((pane) => pane.id));
+    return parsed;
+  }
+
   async function selectWindow(window: TmuxWindow): Promise<void> {
     onFocusSession();
     if (!execEnabled || tmuxSession === undefined) return;
@@ -57,15 +92,22 @@
   $effect(() => {
     if (!execEnabled) {
       windows = [];
+      panes = [];
       return;
     }
     let cancelled = false;
     const refresh = async (): Promise<void> => {
       try {
         const next = await loadWindows();
-        if (!cancelled) windows = next;
+        const nextPanes = await loadPanes();
+        if (cancelled) return;
+        windows = next;
+        panes = nextPanes;
       } catch {
-        if (!cancelled) windows = [];
+        if (!cancelled) {
+          windows = [];
+          panes = [];
+        }
       }
     };
     void refresh();
@@ -81,9 +123,14 @@
   <ul class="windows">
     {#each windows as window (window.id)}
       {@const detail = windowDetail(window)}
+      {@const state = agentStateIn(window.id)}
+      {@const agent = agentNameIn(window.id) ?? state?.agent}
       <li class:active={window.active}>
         <button type="button" class="window" onclick={() => void selectWindow(window)}>
-          <span class="label">{window.index}: {window.name}</span>
+          <span class="heading">
+            <span class="label">{window.index}: {window.name}</span>
+            <AgentStatusBadge {agent} {state} />
+          </span>
           {#if detail}
             <span class="detail" title={detail}>{detail}</span>
           {/if}
@@ -138,6 +185,13 @@
   .window:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
+  }
+
+  .heading {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: var(--sp-2);
   }
 
   .label,

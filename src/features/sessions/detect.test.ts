@@ -1,6 +1,6 @@
 import type { Session } from "@pty-server/protocol";
 import { describe, expect, it } from "vitest";
-import { detectAgent } from "./agentDetect";
+import { agentLabelFor, detectAgent } from "./agentDetect";
 import { isTmuxSession } from "./tmuxDetect";
 
 function session(overrides: Partial<Session> = {}): Session {
@@ -64,5 +64,21 @@ describe("detectAgent", () => {
 
   it("ignores an unrelated session", () => {
     expect(detectAgent(session({ cmd: "/bin/bash", process: "bash" }))).toBeUndefined();
+  });
+});
+
+describe("agentLabelFor", () => {
+  it("labels a bare command", () => {
+    expect(agentLabelFor("claude")).toBe("Claude Code");
+  });
+
+  it("resolves an absolute path to its binary name", () => {
+    expect(agentLabelFor("/usr/local/bin/codex")).toBe("Codex");
+  });
+
+  it("returns undefined for a missing or unrelated command", () => {
+    expect(agentLabelFor(undefined)).toBeUndefined();
+    expect(agentLabelFor("")).toBeUndefined();
+    expect(agentLabelFor("bash")).toBeUndefined();
   });
 });

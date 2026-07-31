@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTty, parseWindows, sessionNameForTty, windowDetail, type TmuxWindow } from "./tmuxParse";
+import { parsePanes, parseTty, parseWindows, sessionNameForTty, windowDetail, type TmuxWindow } from "./tmuxParse";
 
 function window(overrides: Partial<TmuxWindow> = {}): TmuxWindow {
   return { id: "@1", index: "0", name: "editor", active: false, command: "nvim", paneTitle: "", ...overrides };
@@ -103,5 +103,27 @@ describe("windowDetail", () => {
 
   it("keeps the active window's detail, which the session row does not always carry", () => {
     expect(windowDetail(window({ active: true, paneTitle: "* detect-session-views" }))).toBe("* detect-session-views");
+  });
+});
+
+describe("parsePanes", () => {
+  it("maps every pane to its window and command", () => {
+    expect(parsePanes("%1\t@0\tbash\n%2\t@0\tclaude\n%3\t@1\tnvim\n")).toEqual([
+      { id: "%1", windowId: "@0", command: "bash" },
+      { id: "%2", windowId: "@0", command: "claude" },
+      { id: "%3", windowId: "@1", command: "nvim" },
+    ]);
+  });
+
+  it("keeps a pane whose command is empty", () => {
+    expect(parsePanes("%1\t@0\t")).toEqual([{ id: "%1", windowId: "@0", command: "" }]);
+  });
+
+  it("skips blank and truncated lines", () => {
+    expect(parsePanes("\n%1\n%2\t@0\tbash\n")).toEqual([{ id: "%2", windowId: "@0", command: "bash" }]);
+  });
+
+  it("returns nothing for empty output", () => {
+    expect(parsePanes("")).toEqual([]);
   });
 });

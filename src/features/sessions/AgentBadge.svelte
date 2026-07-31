@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Session } from "@pty-server/protocol";
   import { useServerRegistry } from "../../registry/context";
+  import { agentStateKey } from "../../registry/agentStateKey";
+  import AgentStatusBadge from "./AgentStatusBadge.svelte";
   import { detectAgent } from "./agentDetect";
 
   interface Props {
@@ -12,7 +14,8 @@
 
   const serverRegistry = useServerRegistry();
 
-  let agent = $derived(detectAgent(session));
+  let state = $derived(serverRegistry.get(serverId)?.agentStates[agentStateKey(session.id, undefined)]);
+  let agent = $derived(detectAgent(session) ?? state?.agent);
   let awaitingApproval = $derived(
     serverRegistry.pendingQuestions.some(
       (question) => question.serverId === serverId && question.sessionId === session.id,
@@ -20,36 +23,14 @@
   );
 </script>
 
-{#if agent}
-  <div class="agent">
-    <span class="badge">{agent}</span>
-    {#if awaitingApproval}
-      <span class="awaiting">Awaiting approval</span>
-    {/if}
-  </div>
-{/if}
+<div class="row">
+  <AgentStatusBadge {agent} {state} {awaitingApproval} />
+</div>
 
 <style>
-  .agent {
+  .row {
     display: flex;
     min-width: 0;
-    align-items: baseline;
-    gap: var(--sp-2);
     padding: 0 var(--sp-2) var(--sp-2) var(--sp-2);
-    font-size: 0.75rem;
   }
-
-  .badge {
-    flex: 0 0 auto;
-    padding: 1px 6px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--fg-dim);
-  }
-
-  .awaiting {
-    flex: 0 0 auto;
-    color: var(--accent);
-  }
-
 </style>

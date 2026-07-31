@@ -28,6 +28,7 @@ export interface ChromeSlotItem {
 export interface SessionViewContext {
   session: Session;
   terminalTitle?: string;
+  agentState?: AgentState;
 }
 
 /** Sub-rows under a session row, chosen by what is running in the session. */
@@ -82,6 +83,22 @@ export interface ServerConn {
   readonly sessions: Session[];
   /** Latest terminal titles received from this server's global event stream. */
   readonly terminalTitles: Readonly<Record<string, string>>;
+  readonly agentStates: Readonly<Record<string, AgentState>>;
+}
+
+export type AgentActivity = "idle" | "busy" | "tool" | "waiting" | "compacting";
+
+export interface AgentState {
+  readonly agent: string;
+  readonly activity: AgentActivity;
+  readonly sessionId: string;
+  readonly pane?: string;
+  readonly cwd?: string;
+  readonly tool?: string;
+  readonly detail?: string;
+  readonly message?: string;
+  readonly subagents: number;
+  readonly updatedAt: number;
 }
 
 /** A Choux-supported `choux.question` request awaiting a local response. */
@@ -134,6 +151,8 @@ export interface ServerRegistry {
   refresh(id: string): void;
   /** Rejects when the server advertises no `exec` capability, so callers must treat failure as "no data", not as an outage. */
   execSession(serverId: string, sessionId: string, body: ExecSessionRequest): Promise<ExecSessionResponse>;
+  /** Drops pane-keyed agent state for panes that no longer exist. An empty list is a no-op so a failed `tmux` call never wipes state. */
+  reconcileAgentPanes(serverId: string, panes: readonly string[]): void;
   /** Sends the correlated reply and removes the question when it was accepted locally. */
   answerQuestion(id: string, response: QuestionResponse): QuestionResponseResult;
 }

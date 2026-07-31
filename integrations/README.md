@@ -1,9 +1,13 @@
-# Choux permission integrations
+# Choux agent integrations
 
 These integrations forward agent permission requests to Choux through a Ptys
 `choux.question` event. Select **Allow** or **Deny** in Choux to answer the
 agent. If Ptys is unavailable, the dialog is cancelled, or an integration
 fails, the agent falls back to its own normal permission prompt.
+
+Claude Code has a second, optional integration that reports what it is doing as
+a `choux.agent.state` event, so Choux can show a live status next to the right
+session - and, in tmux, next to the right window.
 
 ## Requirements
 
@@ -48,6 +52,28 @@ cp integrations/claude-code/choux_permission_request.py ~/.claude/hooks/
 Start a new Claude Code session. Its `PermissionRequest` hook runs only when
 Claude Code is about to display a native permission dialog.
 
+### Agent status
+
+To also show Claude Code's activity in Choux's session list, install the state
+reporter and merge `claude-code/agent-state.settings.json` the same way:
+
+```bash
+cp integrations/claude-code/choux_agent_state.py ~/.claude/hooks/
+```
+
+It is wired to every Claude Code hook event, so it runs on every tool call. It
+posts directly to the Ptys control socket - no `ptys` process per event - and
+always exits 0 without writing to stdout, so it cannot disturb the agent.
+
+Both files carry a `PermissionRequest` entry. When merging them into
+`~/.claude/settings.json`, keep both commands in that event's `hooks` array
+rather than letting one replace the other.
+
+Inside tmux the reporter tags each event with `$TMUX_PANE`, which is what lets
+Choux attribute status to a single window instead of the whole session. Panes
+that started before `update-environment` was set have no endpoint and report
+nothing - see the requirements above.
+
 ## OpenCode
 
 Copy the global plugin and merge `opencode/opencode.json` into
@@ -66,5 +92,6 @@ approval only; it does not create an "always allow" rule.
 ## Files
 
 - `codex/` — Codex `PermissionRequest` hook and its hook configuration.
-- `claude-code/` — Claude Code `PermissionRequest` hook and settings entry.
+- `claude-code/` — Claude Code `PermissionRequest` hook and settings entry,
+  plus the optional `choux.agent.state` reporter and its settings entry.
 - `opencode/` — OpenCode `permission.asked` plugin and permission settings.

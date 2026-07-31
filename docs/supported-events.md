@@ -77,6 +77,74 @@ A selected option returns:
 
 Check `data.cancelled === true` before reading `data.answer`.
 
+Choux can be configured not to handle questions at all (Settings → Events →
+"Handle question requests"). It then replies `{ "cancelled": true }` straight
+away rather than staying silent, so senders are never left waiting on their
+timeout. Always keep a local fallback for a cancelled reply.
+
+The other two settings in that group decide what a question does to the app
+window: "Bring Choux to the front" reveals and focuses it (on by default), and
+"Follow sessions asking for input" additionally selects the session and
+switches to its tmux window (off by default). Both also apply to an agent
+reporting `waiting` through `choux.agent.state` below.
+
 Choux's WebSocket reply contains only the reply `type` and `data`; Ptys restores the originating `sessionId` before returning this envelope to the application.
 
 Ptys returns `409` if no event subscriber is connected or the session ends, and `504` if a finite request times out. When multiple clients are connected, Ptys accepts the first reply.
+
+## `choux.agent.state`
+
+Use `choux.agent.state` to report what an agent in the session is doing. Choux
+shows it next to the session in the sidebar, and next to the individual tmux
+window when the event carries a pane.
+
+Unlike `choux.question`, this is a plain notification - send it **without**
+`--request`. Ptys accepts it whether or not a client is listening, so a
+reporting hook is safe to run when Choux is closed.
+
+```json
+{
+  "agent": "claude-code",
+  "event": "PreToolUse",
+  "at": 1785510777123,
+  "pane": "%3",
+  "pid": 302457,
+  "cwd": "/home/you/project",
+  "agentSessionId": "0f3c…",
+  "tool": "Bash",
+  "detail": "npm test",
+  "message": "Claude needs your permission to use Bash"
+}
+```
+
+`agent`, `event` and `at` (epoch milliseconds) are required; everything else is
+optional. `at` also orders events - hooks are separate processes, so a payload
+older than the state Choux already holds is dropped.
+
+`pane` is the tmux pane id (`$TMUX_PANE`). One Ptys session hosting a tmux
+client covers every window in that client, so without a pane Choux can only
+attribute the state to the whole session. Pass it whenever the reporter knows
+it.
+
+Choux understands these Claude Code `event` names and ignores any other:
+
+| `event` | Shown as |
+| --- | --- |
+| `SessionStart` | Idle |
+| `UserPromptSubmit`, `PostToolUse` | Working |
+| `PreToolUse` | the `tool` name; `Task` also counts a subagent |
+| `PermissionRequest`, `Notification` | Awaiting approval |
+| `SubagentStop` | one fewer subagent |
+| `PreCompact` | Compacting |
+| `Stop` | Idle |
+| `SessionEnd` | the entry is dropped |
+
+Keep `detail` short - it is a one-line hint, not a payload. Do not send file
+contents or diffs.
+
+State that stops being refreshed expires after ten minutes. Choux also drops
+state for a pane once tmux no longer lists it, and for a session once that
+session exits, so an agent that is killed without reporting `SessionEnd` still
+disappears.
+
+`ptys` supplies `sessionId`; sending your own is an error.

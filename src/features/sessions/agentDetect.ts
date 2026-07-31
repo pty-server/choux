@@ -7,12 +7,14 @@ export const agentLabels: Readonly<Record<string, string>> = {
   opencode: "OpenCode",
 };
 
+export function agentLabelFor(command: string | undefined): string | undefined {
+  return command === undefined || command.length === 0 ? undefined : agentLabels[basename(command)];
+}
+
 export function detectAgent(session: Session): string | undefined {
   if (session.exited !== undefined) return undefined;
-  const candidates = [session.process, session.cmd, session.args[0]];
-  for (const candidate of candidates) {
-    if (candidate === undefined) continue;
-    const label = agentLabels[basename(candidate)];
+  for (const candidate of [session.process, session.cmd, session.args[0]]) {
+    const label = agentLabelFor(candidate);
     if (label !== undefined) return label;
   }
   return undefined;
