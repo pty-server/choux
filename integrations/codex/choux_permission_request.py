@@ -54,7 +54,7 @@ def question_for(request: dict[str, Any]) -> dict[str, Any]:
         if detail and detail not in ("null", "{}"):
             parts.extend(["", "Request:", clipped(detail)])
     return {
-        "type": "ptys.question",
+        "type": "choux.question",
         "data": {
             "title": "Codex permission request",
             "message": "\n".join(parts),
@@ -62,6 +62,7 @@ def question_for(request: dict[str, Any]) -> dict[str, Any]:
                 {"id": "allow", "label": "Allow"},
                 {"id": "deny", "label": "Deny"},
             ],
+            "notes": False,
         },
     }
 

@@ -188,7 +188,7 @@ describe("server registry event stream", () => {
       ttl: 0,
       event: {
         sessionId: "session-1",
-        type: "ptys.question",
+        type: "choux.question",
         data: { message: "Allow changes?", options: [{ id: "allow", label: "Allow" }, { id: "deny", label: "Deny" }] },
       },
     }) });
@@ -198,13 +198,13 @@ describe("server registry event stream", () => {
       ttl: 0,
       event: {
         sessionId: "session-2",
-        type: "ptys.question",
+        type: "choux.question",
         data: { message: "Run tests?", options: [{ id: "yes", label: "Yes" }] },
       },
     }) });
 
     expect(registry.pendingQuestions.map((question) => question.message)).toEqual(["Allow changes?", "Run tests?"]);
-    expect(registry.pendingQuestions[0]).toMatchObject({ serverId: conn.config.id, serverLabel: "Local", sessionLabel: "Agent" });
+    expect(registry.pendingQuestions[0]).toMatchObject({ serverId: conn.config.id, serverLabel: "Local", sessionLabel: "Agent", notes: true });
     expect(revealQuestion).toHaveBeenCalledTimes(1);
     expect(registry.answerQuestion(`${conn.config.id}:request-1`, { answer: "allow", note: "Only this file" })).toEqual({ ok: true });
     expect(registry.answerQuestion(`${conn.config.id}:request-2`, { cancelled: true })).toEqual({ ok: true });
@@ -213,14 +213,49 @@ describe("server registry event stream", () => {
       {
         t: "event.reply",
         requestId: "request-1",
-        event: { type: "ptys.question.answer", data: { answer: "allow", note: "Only this file" } },
+        event: { type: "choux.question.answer", data: { answer: "allow", note: "Only this file" } },
       },
       {
         t: "event.reply",
         requestId: "request-2",
-        event: { type: "ptys.question.answer", data: { cancelled: true } },
+        event: { type: "choux.question.answer", data: { cancelled: true } },
       },
     ]);
+  });
+
+  it("carries the note preference and rejects a non-boolean one", async () => {
+    const sockets: MockEventSocket[] = [];
+    const client = clientWith({ sessions: [{ id: "session-1", name: "Agent" }] });
+    const registry = createServerRegistry({
+      createClient: () => client,
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 1000,
+    });
+    await registry.addServer({ url: "http://one.test", token: "one", label: "Local" });
+    await settle();
+    const socket = sockets[0];
+    if (!socket) throw new Error("Expected an event socket");
+    socket.readyState = 1;
+
+    const question = (requestId: string, notes: unknown): string => JSON.stringify({
+      t: "event",
+      requestId,
+      ttl: 0,
+      event: {
+        sessionId: "session-1",
+        type: "choux.question",
+        data: { message: "Allow changes?", options: [{ id: "allow", label: "Allow" }], ...(notes === undefined ? {} : { notes }) },
+      },
+    });
+
+    socket.onmessage?.({ data: question("request-1", false) });
+    socket.onmessage?.({ data: question("request-2", "yes") });
+
+    expect(registry.pendingQuestions.map((pending) => pending.notes)).toEqual([false]);
   });
 
   it("removes question requests when their session exits", async () => {
@@ -243,7 +278,7 @@ describe("server registry event stream", () => {
       t: "event",
       requestId: "request-1",
       ttl: 0,
-      event: { sessionId: "session-1", type: "ptys.question", data: { message: "Continue?", options: [{ id: "yes", label: "Yes" }] } },
+      event: { sessionId: "session-1", type: "choux.question", data: { message: "Continue?", options: [{ id: "yes", label: "Yes" }] } },
     }) });
     expect(registry.pendingQuestions).toHaveLength(1);
     socket.onmessage?.({ data: JSON.stringify({
@@ -274,7 +309,7 @@ describe("server registry event stream", () => {
       t: "event",
       requestId: "request-1",
       ttl: 0.01,
-      event: { sessionId: "session-1", type: "ptys.question", data: { message: "Continue?", options: [{ id: "yes", label: "Yes" }] } },
+      event: { sessionId: "session-1", type: "choux.question", data: { message: "Continue?", options: [{ id: "yes", label: "Yes" }] } },
     }) });
     expect(registry.pendingQuestions).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 25));

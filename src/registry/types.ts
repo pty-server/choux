@@ -84,7 +84,7 @@ export interface ServerConn {
   readonly terminalTitles: Readonly<Record<string, string>>;
 }
 
-/** A Choux-supported `ptys.question` request awaiting a local response. */
+/** A Choux-supported `choux.question` request awaiting a local response. */
 export interface PendingQuestion {
   readonly id: string;
   readonly serverId: string;
@@ -94,6 +94,8 @@ export interface PendingQuestion {
   readonly title?: string;
   readonly message: string;
   readonly options: readonly QuestionOption[];
+  /** Whether the dialog offers a free-text note. Requests omitting it get one. */
+  readonly notes: boolean;
 }
 
 export interface QuestionOption {

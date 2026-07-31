@@ -75,6 +75,7 @@ interface QuestionData {
   title?: string;
   message: string;
   options: QuestionOption[];
+  notes?: boolean;
 }
 
 function isQuestionData(value: unknown): value is QuestionData {
@@ -82,6 +83,7 @@ function isQuestionData(value: unknown): value is QuestionData {
     return false;
   }
   if (value.title !== undefined && typeof value.title !== "string") return false;
+  if (value.notes !== undefined && typeof value.notes !== "boolean") return false;
 
   const optionIds: string[] = [];
   return value.options.every((option) => {
@@ -197,7 +199,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       const event = frame.event;
       const requestId = frame.requestId;
       const ttl = frame.ttl;
-      if (event.type === "ptys.question" && requestId !== undefined && ttl !== undefined && isQuestionData(event.data)) {
+      if (event.type === "choux.question" && requestId !== undefined && ttl !== undefined && isQuestionData(event.data)) {
         const id = `${config.id}:${requestId}`;
         if (pendingQuestions.some((question) => question.id === id)) return;
         const wasEmpty = pendingQuestions.length === 0;
@@ -210,13 +212,14 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
           ...(event.data.title === undefined ? {} : { title: event.data.title }),
           message: event.data.message,
           options: event.data.options,
+          notes: event.data.notes !== false,
         };
         pendingQuestions = [...pendingQuestions, question];
         // Questions are displayed one at a time. Do not steal focus for a
         // later queued question while the user is already answering one.
         if (wasEmpty) void revealQuestion();
         questionReplies.set(id, (response) => eventStream?.reply(requestId, {
-          type: "ptys.question.answer",
+          type: "choux.question.answer",
           data: response,
         }) ?? false);
         if (ttl > 0) {

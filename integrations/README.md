@@ -1,7 +1,7 @@
 # Choux permission integrations
 
 These integrations forward agent permission requests to Choux through a Ptys
-`ptys.question` event. Select **Allow** or **Deny** in Choux to answer the
+`choux.question` event. Select **Allow** or **Deny** in Choux to answer the
 agent. If Ptys is unavailable, the dialog is cancelled, or an integration
 fails, the agent falls back to its own normal permission prompt.
 

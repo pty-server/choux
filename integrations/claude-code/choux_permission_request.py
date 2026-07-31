@@ -88,11 +88,12 @@ def question_for(request: dict[str, Any]) -> dict[str, Any]:
             parts.extend(["", "Request:", clipped(detail)])
 
     return {
-        "type": "ptys.question",
+        "type": "choux.question",
         "data": {
             "title": "Claude Code permission request",
             "message": "\n".join(parts),
             "options": [{"id": "allow", "label": "Allow"}, {"id": "deny", "label": "Deny"}],
+            "notes": False,
         },
     }
 

@@ -53,7 +53,7 @@ describe("EventStreamController", () => {
     socket.onmessage?.({ data: JSON.stringify({
       t: "event",
       requestId: "missing-ttl",
-      event: { sessionId: "session-1", type: "ptys.question", data: {} },
+      event: { sessionId: "session-1", type: "choux.question", data: {} },
     }) });
 
     expect(received).toEqual([
@@ -80,7 +80,7 @@ describe("EventStreamController", () => {
       t: "event",
       requestId: "request-1",
       ttl: 30,
-      event: { sessionId: "session-1", type: "ptys.question", data: {} },
+      event: { sessionId: "session-1", type: "choux.question", data: {} },
     }) });
     socket.readyState = 1;
 
@@ -88,16 +88,16 @@ describe("EventStreamController", () => {
       t: "event",
       requestId: "request-1",
       ttl: 30,
-      event: { sessionId: "session-1", type: "ptys.question", data: {} },
+      event: { sessionId: "session-1", type: "choux.question", data: {} },
     }]);
     expect(controller.reply("request-1", {
-      type: "ptys.question.answer",
+      type: "choux.question.answer",
       data: { answer: "allow" },
     })).toBe(true);
     expect(socket.sent).toEqual([JSON.stringify({
       t: "event.reply",
       requestId: "request-1",
-      event: { type: "ptys.question.answer", data: { answer: "allow" } },
+      event: { type: "choux.question.answer", data: { answer: "allow" } },
     })]);
   });
 

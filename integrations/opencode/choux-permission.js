@@ -43,11 +43,12 @@ function questionFor(permission) {
   if (metadata !== undefined) parts.push("", "Details:", clipped(asText(metadata)));
 
   return {
-    type: "ptys.question",
+    type: "choux.question",
     data: {
       title: "OpenCode permission request",
       message: parts.join("\n"),
       options: [{ id: "allow", label: "Allow" }, { id: "deny", label: "Deny" }],
+      notes: false,
     },
   };
 }

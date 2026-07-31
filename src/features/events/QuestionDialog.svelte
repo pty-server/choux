@@ -64,10 +64,12 @@
           </button>
         {/each}
       </div>
-      <label>
-        Add a note <span>(optional)</span>
-        <textarea bind:value={note} rows="3" placeholder="Add context for the requester"></textarea>
-      </label>
+      {#if question.notes}
+        <label>
+          Add a note <span>(optional)</span>
+          <textarea bind:value={note} rows="3" placeholder="Add context for the requester"></textarea>
+        </label>
+      {/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="actions">
         <button type="button" class="cancel" onclick={() => respond({ cancelled: true })}>Cancel</button>

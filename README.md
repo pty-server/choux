@@ -78,7 +78,7 @@ npm run test:integration   # integration tests against a real ptys server
 
 ## Supported custom events
 
-Applications running inside Ptys sessions can ask Choux to handle selected custom events. See [Supported custom events](docs/supported-events.md) for the `ptys.question` request format and response envelopes.
+Applications running inside Ptys sessions can ask Choux to handle selected custom events. See [Supported custom events](docs/supported-events.md) for the `choux.question` request format and response envelopes.
 
 ## License
 
