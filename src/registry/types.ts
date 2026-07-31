@@ -135,13 +135,25 @@ export interface QuestionOrigin {
   readonly tool?: string;
 }
 
-export type QuestionBlock = QuestionCommandBlock;
+export type QuestionBlock = QuestionCommandBlock | QuestionFieldsBlock;
 
 export interface QuestionCommandBlock {
   readonly kind: "command";
   readonly command: string;
   readonly cwd?: string;
   readonly badges?: readonly string[];
+}
+
+/** Labelled values for a request with no shape of its own - a URL and its prompt, a path and a line range. */
+export interface QuestionFieldsBlock {
+  readonly kind: "fields";
+  readonly title?: string;
+  readonly fields: readonly QuestionField[];
+}
+
+export interface QuestionField {
+  readonly label: string;
+  readonly value: string;
 }
 
 export type QuestionResponse =

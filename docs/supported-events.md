@@ -18,7 +18,8 @@ The event must be a Ptys request event (`request: true`). Its `data` is:
   ],
   "notes": true,
   "blocks": [
-    { "kind": "command", "command": "npm test -- --run", "cwd": "/home/you/project", "badges": ["sandbox disabled"] }
+    { "kind": "command", "command": "npm test -- --run", "cwd": "/home/you/project", "badges": ["sandbox disabled"] },
+    { "kind": "fields", "title": "Read a file", "fields": [{ "label": "File", "value": "/home/you/project/src/app.ts" }] }
   ]
 }
 ```
@@ -34,6 +35,7 @@ each block its own presentation.
 | `kind` | Fields | Shown as |
 | --- | --- | --- |
 | `command` | `command` (required), `cwd`, `badges` | The command in a monospace panel, with the working directory and any badges in its header |
+| `fields` | `fields` (required: `{ label, value }` entries), `title` | A labelled list - a URL and what is being asked of it, a path and a line range. Entries with an empty `label` or `value` are dropped; a block left with none is dropped whole |
 
 Keep `message` a one-line summary when you send blocks; it is the sentence above
 the panel, not a second copy of the payload.

@@ -287,7 +287,9 @@ describe("server registry event stream", () => {
           options: [{ id: "allow", label: "Allow" }],
           blocks: [
             { kind: "command", command: "npm test", cwd: "/w", badges: ["sandbox disabled", 7] },
+            { kind: "fields", title: "Read a file", fields: [{ label: "File", value: "/w/a.ts" }, { label: "Range", value: "" }, { label: 4, value: "x" }] },
             { kind: "command", command: "" },
+            { kind: "fields", fields: [] },
             { kind: "diff", patch: "@@" },
             "npm test",
           ],
@@ -297,6 +299,7 @@ describe("server registry event stream", () => {
 
     expect(registry.pendingQuestions[0]?.blocks).toEqual([
       { kind: "command", command: "npm test", cwd: "/w", badges: ["sandbox disabled"] },
+      { kind: "fields", title: "Read a file", fields: [{ label: "File", value: "/w/a.ts" }] },
     ]);
   });
 

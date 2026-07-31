@@ -174,6 +174,46 @@ def command_question(command: str, description: str | None, tool_input: dict[str
     }
 
 
+def fields_question(title: str, message: str, fields: list[tuple[str, object]], suggestions: list[dict[str, Any]]) -> dict[str, Any]:
+    listed = [{"label": label, "value": clipped(value.strip())} for label, value in fields if isinstance(value, str) and value.strip()]
+    return {
+        "type": "choux.question",
+        "data": {
+            "title": title,
+            "message": message,
+            "options": [allow_option(), *suggestions, deny_option()],
+            "blocks": [{"kind": "fields", "fields": listed}],
+        },
+    }
+
+
+def line_range(tool_input: dict[str, Any]) -> str | None:
+    offset = tool_input.get("offset")
+    limit = tool_input.get("limit")
+    start = offset if isinstance(offset, int) and offset > 0 else 1
+    if not isinstance(limit, int) or limit <= 0:
+        return None if start == 1 else f"from line {start}"
+    return f"lines {start}-{start + limit - 1}"
+
+
+def read_question(tool_input: dict[str, Any], suggestions: list[dict[str, Any]]) -> dict[str, Any]:
+    return fields_question(
+        "Read a file",
+        "Claude Code wants to read a file.",
+        [("File", tool_input.get("file_path")), ("Range", line_range(tool_input)), ("Pages", tool_input.get("pages"))],
+        suggestions,
+    )
+
+
+def fetch_question(tool_input: dict[str, Any], suggestions: list[dict[str, Any]]) -> dict[str, Any]:
+    return fields_question(
+        "Fetch a web page",
+        "Claude Code wants to fetch a URL.",
+        [("URL", tool_input.get("url")), ("Asking", tool_input.get("prompt"))],
+        suggestions,
+    )
+
+
 def generic_question(tool_name: object, description: str | None, details: object, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
     parts = [f"Claude Code requests permission to use {tool_name or 'a tool'}."]
     if description:
@@ -210,11 +250,16 @@ def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, lis
         else tool_input
     )
     command = details.get("command") if isinstance(details, dict) else None
-    question = (
-        command_question(command.strip(), description, tool_input, request.get("cwd"), suggestions)
-        if tool_name == "Bash" and isinstance(tool_input, dict) and isinstance(command, str) and command.strip()
-        else generic_question(tool_name, description, details, suggestions)
-    )
+    if not isinstance(tool_input, dict):
+        question = generic_question(tool_name, description, details, suggestions)
+    elif tool_name == "Bash" and isinstance(command, str) and command.strip():
+        question = command_question(command.strip(), description, tool_input, request.get("cwd"), suggestions)
+    elif tool_name == "Read" and isinstance(tool_input.get("file_path"), str):
+        question = read_question(tool_input, suggestions)
+    elif tool_name == "WebFetch" and isinstance(tool_input.get("url"), str):
+        question = fetch_question(tool_input, suggestions)
+    else:
+        question = generic_question(tool_name, description, details, suggestions)
     question["data"]["origin"] = origin_for(request)
     return question, updates
 

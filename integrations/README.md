@@ -54,6 +54,8 @@ Claude Code is about to display a native permission dialog.
 
 A `Bash` request is sent as a `command` block, so Choux shows the command in a
 monospace panel with its working directory and a badge when the sandbox is off.
+`Read` and `WebFetch` are sent as a `fields` block - path and line range, URL
+and what is being asked of it. Every other tool keeps the plain text rendering.
 
 Answers keep Claude Code's own yes/no wording rather than an allow/deny one of
 their own. Beyond **Yes** and **No**, the dialog offers whatever Claude Code

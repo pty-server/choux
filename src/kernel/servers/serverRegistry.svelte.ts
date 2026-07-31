@@ -96,12 +96,27 @@ function commandBlock(value: Record<string, unknown>): QuestionBlock | undefined
   };
 }
 
+function fieldsBlock(value: Record<string, unknown>): QuestionBlock | undefined {
+  if (!Array.isArray(value.fields)) return undefined;
+  const fields = value.fields.flatMap((field) => (
+    isEventData(field) && typeof field.label === "string" && field.label.length > 0 && typeof field.value === "string" && field.value.length > 0
+      ? [{ label: field.label, value: field.value }]
+      : []
+  ));
+  if (fields.length === 0) return undefined;
+  return {
+    kind: "fields",
+    ...(typeof value.title === "string" && value.title.length > 0 ? { title: value.title } : {}),
+    fields,
+  };
+}
+
 /** Keeps only the blocks this client knows how to draw, so a sender that grows a new kind still gets its question shown. */
 function questionBlocks(value: unknown[] | undefined): QuestionBlock[] {
   if (value === undefined) return [];
   return value.flatMap((block) => {
-    if (!isEventData(block) || block.kind !== "command") return [];
-    const parsed = commandBlock(block);
+    if (!isEventData(block)) return [];
+    const parsed = block.kind === "command" ? commandBlock(block) : block.kind === "fields" ? fieldsBlock(block) : undefined;
     return parsed === undefined ? [] : [parsed];
   });
 }

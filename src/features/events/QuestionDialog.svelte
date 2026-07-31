@@ -79,12 +79,22 @@
         <div class="blocks">
           {#each question.blocks as block, index (index)}
             <section class="block">
-              <header>
-                <span class="kind">Command</span>
-                {#if block.cwd}<span class="cwd">{block.cwd}</span>{/if}
-                {#each block.badges ?? [] as badge (badge)}<span class="badge">{badge}</span>{/each}
-              </header>
-              <pre>{block.command}</pre>
+              {#if block.kind === "command"}
+                <header>
+                  <span class="kind">Command</span>
+                  {#if block.cwd}<span class="cwd">{block.cwd}</span>{/if}
+                  {#each block.badges ?? [] as badge (badge)}<span class="badge">{badge}</span>{/each}
+                </header>
+                <pre>{block.command}</pre>
+              {:else}
+                <header><span class="kind">{block.title || "Details"}</span></header>
+                <dl>
+                  {#each block.fields as field (field.label)}
+                    <dt>{field.label}</dt>
+                    <dd>{field.value}</dd>
+                  {/each}
+                </dl>
+              {/if}
             </section>
           {/each}
         </div>
@@ -128,6 +138,9 @@
   .cwd { flex: 1 1 auto; min-width: 0; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .badge { flex: 0 0 auto; padding: 1px var(--sp-1); color: var(--status-offline); border: 1px solid currentColor; border-radius: 999px; }
   .block pre { margin: 0; padding: var(--sp-2); font: inherit; font-size: 0.85rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; padding: var(--sp-2); font-size: 0.85rem; }
+  dt { color: var(--fg-dim); }
+  dd { margin: 0; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
   .options { display: grid; gap: var(--sp-2); }
   .option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--sp-2) var(--sp-3); color: var(--fg); text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
   .option:hover, .option:focus-visible { border-color: var(--accent); }
