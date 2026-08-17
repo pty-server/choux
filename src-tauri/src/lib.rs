@@ -1,4 +1,9 @@
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::OnceLock,
+};
 
 #[cfg(unix)]
 use std::{
@@ -74,21 +79,132 @@ fn command_message(output: &std::process::Output) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.chars().take(1200).collect())
 }
 
+#[cfg(not(target_os = "windows"))]
+const PATH_MARKER: &str = "__choux_path__";
+
+#[cfg(not(target_os = "windows"))]
+fn login_shell_path() -> Option<String> {
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let script = format!("printf {PATH_MARKER}; printenv PATH; printf {PATH_MARKER}");
+    for flags in ["-lic", "-lc", "-c"] {
+        let Ok(output) = Command::new(&shell)
+            .args([flags, script.as_str()])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        else {
+            continue;
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut parts = stdout.split(PATH_MARKER);
+        let Some(path) = parts.nth(1).map(str::trim) else {
+            continue;
+        };
+        if !path.is_empty() {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn login_shell_path() -> Option<String> {
+    None
+}
+
+fn version_bin_dirs(root: &PathBuf) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut versions: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .collect();
+    versions.sort();
+    versions.reverse();
+    versions
+        .into_iter()
+        .flat_map(|version| [version.join("bin"), version.join("installation/bin")])
+        .collect()
+}
+
+fn common_tool_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/local/bin"),
+    ];
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        dirs.push(home.join(".volta/bin"));
+        dirs.push(home.join(".bun/bin"));
+        dirs.push(home.join(".local/bin"));
+        dirs.extend(version_bin_dirs(&home.join(".nvm/versions/node")));
+        dirs.extend(version_bin_dirs(&home.join(".local/share/fnm/node-versions")));
+        dirs.extend(version_bin_dirs(
+            &home.join("Library/Application Support/fnm/node-versions"),
+        ));
+    }
+    dirs
+}
+
+fn user_path() -> &'static str {
+    static USER_PATH: OnceLock<String> = OnceLock::new();
+    USER_PATH.get_or_init(|| {
+        let separator = if cfg!(target_os = "windows") { ';' } else { ':' };
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let sources = [login_shell_path(), env::var("PATH").ok()];
+        for source in sources.iter().flatten() {
+            dirs.extend(source.split(separator).map(PathBuf::from));
+        }
+        dirs.extend(common_tool_dirs());
+        let mut seen: Vec<String> = Vec::new();
+        for dir in dirs {
+            let text = dir.display().to_string();
+            if !text.is_empty() && !seen.contains(&text) && dir.is_dir() {
+                seen.push(text);
+            }
+        }
+        seen.join(&separator.to_string())
+    })
+}
+
+fn user_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.env("PATH", user_path()).stdin(Stdio::null());
+    command
+}
+
+fn resolve_in_user_path(name: &str) -> Option<PathBuf> {
+    let separator = if cfg!(target_os = "windows") { ';' } else { ':' };
+    user_path()
+        .split(separator)
+        .map(|dir| PathBuf::from(dir).join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 fn npm_available() -> bool {
-    Command::new("npm")
+    user_command("npm")
         .arg("--version")
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
+fn node_available() -> bool {
+    resolve_in_user_path("node").is_some()
+}
+
 fn resolve_ptys() -> Result<PathBuf, String> {
+    if let Some(path) = resolve_in_user_path("ptys") {
+        return Ok(path);
+    }
+
     #[cfg(target_os = "windows")]
     let lookup = "where";
     #[cfg(not(target_os = "windows"))]
     let lookup = "which";
 
-    let output = Command::new(lookup)
+    let output = user_command(lookup)
         .arg("ptys")
         .output()
         .map_err(|_| "Unable to check PATH for ptys.".to_string())?;
@@ -96,28 +212,6 @@ fn resolve_ptys() -> Result<PathBuf, String> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if let Some(path) = stdout.lines().map(str::trim).find(|line| !line.is_empty()) {
             return Ok(PathBuf::from(path));
-        }
-    }
-
-    // Graphical launchers may have a smaller PATH than the user's terminal.
-    // A login shell restores the normal per-user command environment without
-    // assuming a particular install directory or package manager.
-    #[cfg(not(target_os = "windows"))]
-    {
-        let output = Command::new("sh")
-            .args(["-lc", "command -v ptys"])
-            .output()
-            .map_err(|_| "Unable to check PATH for ptys.".to_string())?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(path) = stdout
-                .lines()
-                .rev()
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-            {
-                return Ok(PathBuf::from(path));
-            }
         }
     }
 
@@ -406,7 +500,10 @@ fn local_server_tool() -> LocalServerTool {
             available: true,
             npm_available: npm_available(),
             executable: Some(executable.display().to_string()),
-            message: None,
+            message: (!node_available()).then(|| {
+                "ptys was found, but Node.js is not on PATH. Install Node.js, or launch Choux from a terminal that has it."
+                    .to_string()
+            }),
         },
         Err(message) => LocalServerTool {
             available: false,
@@ -419,7 +516,7 @@ fn local_server_tool() -> LocalServerTool {
 
 #[tauri::command]
 fn local_server_install() -> LocalServerCommandResult {
-    let output = match Command::new("npm")
+    let output = match user_command("npm")
         .args(["install", "--global", "ptys@latest"])
         .output()
     {
@@ -462,7 +559,16 @@ fn local_server_start() -> LocalServerCommandResult {
             }
         }
     };
-    let output = match Command::new(executable).args(["server", "start"]).output() {
+    if !node_available() {
+        return LocalServerCommandResult {
+            ok: false,
+            message: Some(
+                "Node.js is not on PATH, so ptys cannot run. Install Node.js, or launch Choux from a terminal that has it."
+                    .into(),
+            ),
+        };
+    }
+    let output = match user_command(executable).args(["server", "start"]).output() {
         Ok(output) => output,
         Err(error) => {
             return LocalServerCommandResult {
