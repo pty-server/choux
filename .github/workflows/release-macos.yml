@@ -98,13 +98,37 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: --target aarch64-apple-darwin
 
-      - name: Locate built app
+      # The dmg bundler folds the .app into the disk image and then deletes it,
+      # so the shipped app can only be verified from inside the mounted dmg.
+      - name: Locate a single aarch64 DMG
         run: |
+          shopt -s nullglob
           bundle="src-tauri/target/$TARGET/release/bundle"
-          app="$bundle/macos/choux.app"
-          test -d "$app" || { echo "::error::$app not found"; exit 1; }
-          echo "BUNDLE_DIR=$bundle" >> "$GITHUB_ENV"
-          echo "APP_PATH=$app" >> "$GITHUB_ENV"
+          dmgs=("$bundle"/dmg/*.dmg)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one dmg, found ${#dmgs[@]}"
+            exit 1
+          fi
+          case "${dmgs[0]}" in
+            *_aarch64.dmg) echo "${dmgs[0]}" ;;
+            *) echo "::error::dmg is not aarch64: ${dmgs[0]}"; exit 1 ;;
+          esac
+          echo "DMG_PATH=${dmgs[0]}" >> "$GITHUB_ENV"
+
+      - name: Mount the DMG
+        run: |
+          shopt -s nullglob
+          mount_point="$RUNNER_TEMP/dmg"
+          mkdir -p "$mount_point"
+          hdiutil attach "$DMG_PATH" -readonly -nobrowse -mountpoint "$mount_point"
+          echo "MOUNT_POINT=$mount_point" >> "$GITHUB_ENV"
+          apps=("$mount_point"/*.app)
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .app in $DMG_PATH, found ${#apps[@]}"
+            exit 1
+          fi
+          echo "${apps[0]}"
+          echo "APP_PATH=${apps[0]}" >> "$GITHUB_ENV"
 
       - name: Verify code signature
         run: |
@@ -135,15 +159,6 @@ jobs:
           fi
           echo "$got"
 
-      - name: Verify a single aarch64 DMG
-        run: |
-          shopt -s nullglob
-          dmgs=("$BUNDLE_DIR"/dmg/*.dmg)
-          if [ "${#dmgs[@]}" -ne 1 ]; then
-            echo "::error::expected exactly one dmg, found ${#dmgs[@]}"
-            exit 1
-          fi
-          case "${dmgs[0]}" in
-            *_aarch64.dmg) echo "${dmgs[0]}" ;;
-            *) echo "::error::dmg is not aarch64: ${dmgs[0]}"; exit 1 ;;
-          esac
+      - name: Unmount the DMG
+        if: always() && env.MOUNT_POINT != ''
+        run: hdiutil detach "$MOUNT_POINT" || hdiutil detach "$MOUNT_POINT" -force
