@@ -72,6 +72,8 @@ jobs:
           esac
 
       - name: Audit cask
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           brew tap pty-server/tap
           cp "tap/Casks/$CASK_FILE" "$(brew --repository pty-server/tap)/Casks/$CASK_FILE"
