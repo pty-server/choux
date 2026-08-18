@@ -13,6 +13,15 @@
   import { isTauriRuntime } from "../storage/tokenStore";
   import { localPtysSocket } from "../transport/localPtys";
 
+  const bundledTerminalFont = "LiterationMono Nerd Font Mono";
+
+  function terminalFontFamily(): string {
+    const declared = getComputedStyle(document.documentElement)
+      .getPropertyValue("--font-terminal")
+      .trim();
+    return declared || `'${bundledTerminalFont}', monospace`;
+  }
+
   interface Props {
     baseUrl: string;
     localInstance?: string;
@@ -100,7 +109,7 @@
 
     const term = new Terminal({
       allowProposedApi: true,
-      fontFamily: "'LiterationMono Nerd Font Mono', monospace",
+      fontFamily: terminalFontFamily(),
       fontSize: untrack(() => fontSize),
       theme: untrack(() => theme),
     });
@@ -128,8 +137,8 @@
     const waitForFont = async () => {
       try {
         await Promise.all([
-          document.fonts.load(`${loadedFontSize}px "LiterationMono Nerd Font Mono"`),
-          document.fonts.load(`bold ${loadedFontSize}px "LiterationMono Nerd Font Mono"`),
+          document.fonts.load(`${loadedFontSize}px "${bundledTerminalFont}"`),
+          document.fonts.load(`bold ${loadedFontSize}px "${bundledTerminalFont}"`),
         ]);
         await document.fonts.ready;
       } catch {

@@ -476,7 +476,7 @@
   .shortcut-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
   .toggle { grid-template-columns: auto auto; padding: var(--sp-1) var(--sp-2); }
   .toggle input { grid-row: auto; width: auto; height: auto; }
-  .capture { min-width: 14rem; font-family: "LiterationMono Nerd Font Mono", monospace; }
+  .capture { min-width: 14rem; font-family: var(--font-terminal); }
   .capture.capturing { border-color: var(--accent); color: var(--accent); }
   .shortcut-error { margin-top: var(--sp-2); color: #ff7b72; font-size: 0.85rem; }
   .bindings { display: flex; flex-direction: column; gap: var(--sp-1); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
@@ -504,7 +504,7 @@
   }
   .profiles textarea { resize: vertical; }
   .preset-buttons { display: flex; flex-wrap: wrap; gap: var(--sp-1); justify-content: flex-end; }
-  .preview { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-3); padding: var(--sp-3); border-radius: 4px; background: var(--terminal-bg); color: var(--terminal-fg); font-family: "LiterationMono Nerd Font Mono", monospace; }
+  .preview { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-3); padding: var(--sp-3); border-radius: 4px; background: var(--terminal-bg); color: var(--terminal-fg); font-family: var(--font-terminal); }
   .prompt { color: var(--terminal-cursor); }
   .green { color: #7ee787; }
   .yellow { color: #d29922; background: var(--terminal-selection); width: fit-content; }
