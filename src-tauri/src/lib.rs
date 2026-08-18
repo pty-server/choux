@@ -39,6 +39,10 @@ use tokio_tungstenite::{
     tungstenite::{client::IntoClientRequest, Message},
 };
 
+mod locale;
+
+use locale::user_locale;
+
 const TOKEN_SERVICE: &str = "ptys-choux";
 const SHOW_MENU_ID: &str = "show";
 const QUIT_MENU_ID: &str = "quit";
@@ -79,13 +83,18 @@ fn command_message(output: &std::process::Output) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.chars().take(1200).collect())
 }
 
-#[cfg(not(target_os = "windows"))]
-const PATH_MARKER: &str = "__choux_path__";
+const ENV_MARKER: &str = "__choux_env__";
+const SHELL_ENV_VARS: [&str; 4] = ["PATH", "LC_ALL", "LC_CTYPE", "LANG"];
 
 #[cfg(not(target_os = "windows"))]
-fn login_shell_path() -> Option<String> {
+fn login_shell_env() -> Vec<String> {
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let script = format!("printf {PATH_MARKER}; printenv PATH; printf {PATH_MARKER}");
+    let reads = SHELL_ENV_VARS
+        .iter()
+        .map(|name| format!("printf '%s\\n' \"${{{name}-}}\""))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let script = format!("printf {ENV_MARKER}; {reads}; printf {ENV_MARKER}");
     for flags in ["-lic", "-lc", "-c"] {
         let Ok(output) = Command::new(&shell)
             .args([flags, script.as_str()])
@@ -96,20 +105,36 @@ fn login_shell_path() -> Option<String> {
             continue;
         };
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut parts = stdout.split(PATH_MARKER);
-        let Some(path) = parts.nth(1).map(str::trim) else {
+        let Some(block) = stdout.split(ENV_MARKER).nth(1) else {
             continue;
         };
-        if !path.is_empty() {
-            return Some(path.to_string());
+        let values: Vec<String> = block
+            .split('\n')
+            .take(SHELL_ENV_VARS.len())
+            .map(|value| value.trim().to_string())
+            .collect();
+        if values.len() == SHELL_ENV_VARS.len() && !values[0].is_empty() {
+            return values;
         }
     }
-    None
+    Vec::new()
 }
 
 #[cfg(target_os = "windows")]
-fn login_shell_path() -> Option<String> {
-    None
+fn login_shell_env() -> Vec<String> {
+    Vec::new()
+}
+
+pub(crate) fn shell_var(name: &str) -> Option<&'static str> {
+    static SHELL_ENV: OnceLock<Vec<String>> = OnceLock::new();
+    let index = SHELL_ENV_VARS
+        .iter()
+        .position(|candidate| *candidate == name)?;
+    SHELL_ENV
+        .get_or_init(login_shell_env)
+        .get(index)
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 fn version_bin_dirs(root: &PathBuf) -> Vec<PathBuf> {
@@ -139,7 +164,9 @@ fn common_tool_dirs() -> Vec<PathBuf> {
         dirs.push(home.join(".bun/bin"));
         dirs.push(home.join(".local/bin"));
         dirs.extend(version_bin_dirs(&home.join(".nvm/versions/node")));
-        dirs.extend(version_bin_dirs(&home.join(".local/share/fnm/node-versions")));
+        dirs.extend(version_bin_dirs(
+            &home.join(".local/share/fnm/node-versions"),
+        ));
         dirs.extend(version_bin_dirs(
             &home.join("Library/Application Support/fnm/node-versions"),
         ));
@@ -150,9 +177,13 @@ fn common_tool_dirs() -> Vec<PathBuf> {
 fn user_path() -> &'static str {
     static USER_PATH: OnceLock<String> = OnceLock::new();
     USER_PATH.get_or_init(|| {
-        let separator = if cfg!(target_os = "windows") { ';' } else { ':' };
+        let separator = if cfg!(target_os = "windows") {
+            ';'
+        } else {
+            ':'
+        };
         let mut dirs: Vec<PathBuf> = Vec::new();
-        let sources = [login_shell_path(), env::var("PATH").ok()];
+        let sources = [shell_var("PATH").map(str::to_string), env::var("PATH").ok()];
         for source in sources.iter().flatten() {
             dirs.extend(source.split(separator).map(PathBuf::from));
         }
@@ -171,11 +202,21 @@ fn user_path() -> &'static str {
 fn user_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(program);
     command.env("PATH", user_path()).stdin(Stdio::null());
+    for (name, value) in user_locale() {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
     command
 }
 
 fn resolve_in_user_path(name: &str) -> Option<PathBuf> {
-    let separator = if cfg!(target_os = "windows") { ';' } else { ':' };
+    let separator = if cfg!(target_os = "windows") {
+        ';'
+    } else {
+        ':'
+    };
     user_path()
         .split(separator)
         .map(|dir| PathBuf::from(dir).join(name))
