@@ -72,7 +72,7 @@ textarea {
   --font-ui: ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
   --font-terminal:
     "LiterationMono Nerd Font Mono", Menlo, "DejaVu Sans Mono", "Noto Sans Mono", "Hiragino Sans",
-    "Noto Sans Mono CJK SC", "Apple Color Emoji", "Noto Color Emoji", monospace;
+    "Noto Sans Mono CJK SC", monospace;
 }
 
 /* Keep every native scrollable surface within the Choux palette. */
