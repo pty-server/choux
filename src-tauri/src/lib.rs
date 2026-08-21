@@ -27,7 +27,7 @@ use tauri::Emitter;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, Window, WindowEvent,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -868,10 +868,17 @@ fn global_shortcut_set(_accelerator: Option<String>) -> Result<(), String> {
     Err("Global shortcuts are only available on desktop.".into())
 }
 
-fn hide_on_close(window: &Window, event: &WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        api.prevent_close();
-        let _ = window.hide();
+fn hide_to_tray(window: &Window, event: &WindowEvent) {
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            let _ = window.hide();
+        }
+        WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
+            let _ = window.unminimize();
+            let _ = window.hide();
+        }
+        _ => {}
     }
 }
 
@@ -911,11 +918,22 @@ pub fn run() {
             TrayIconBuilder::with_id("main-tray")
                 .icon(tray_icon)
                 .menu(&menu)
+                .show_menu_on_left_click(false)
                 .tooltip("choux")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     SHOW_MENU_ID => show_main_window(app),
                     QUIT_MENU_ID => app.exit(0),
                     _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
                 })
                 .build(app)?;
 
@@ -926,7 +944,7 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(hide_on_close)
+        .on_window_event(hide_to_tray)
         .invoke_handler(tauri::generate_handler![
             token_get,
             token_set,
