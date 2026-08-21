@@ -235,6 +235,8 @@
     <button type="button" class="close" onclick={onClose}>Back to terminal</button>
   </header>
 
+  <div class="cards">
+  <div class="card-column">
   {#if globalShortcutSupported}
     <section class="settings-card shortcut-card">
       <div class="card-heading">
@@ -296,7 +298,9 @@
       </li>
     </ul>
   </section>
+  </div>
 
+  <div class="card-column">
   <section class="settings-card shortcut-card">
     <div class="card-heading">
       <div>
@@ -331,6 +335,8 @@
       <p>Needs a modifier other than Shift. Escape cancels capture.</p>
     {/if}
   </section>
+  </div>
+  </div>
 
   <section class="settings-card profiles-card">
     <div class="card-heading">
@@ -392,7 +398,7 @@
     {/if}
   </section>
 
-  <section class="settings-card">
+  <section class="settings-card colors-card">
     <div class="card-heading">
       <div>
         <h2>Terminal colors</h2>
@@ -460,9 +466,23 @@
 </section>
 
 <style>
-  .settings-page { width: min(100%, 960px); height: 100%; margin: 0 auto; padding: var(--sp-4); overflow: auto; }
-  header, .card-heading, .actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
-  header { margin-bottom: var(--sp-4); }
+  .settings-page {
+    display: flex; flex-direction: column; gap: var(--sp-4);
+    box-sizing: border-box; width: 100%; height: 100%; padding: 0 var(--sp-4) var(--sp-4); overflow: auto;
+  }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: var(--sp-4); }
+  .card-column { display: flex; flex-direction: column; gap: var(--sp-4); }
+  .card-column > .settings-card:last-child { flex: 1 1 auto; }
+  header, .card-heading, .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+  header {
+    position: sticky; top: 0; z-index: 2;
+    margin: 0 calc(-1 * var(--sp-4));
+    padding: var(--sp-4);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .card-heading > div:first-child { flex: 1 1 16rem; min-width: 0; }
+  .card-heading > .save, .card-heading > .profile-actions { flex: 0 0 auto; }
   h1, h2, h3, p { margin: 0; }
   h1 { font-size: 1.15rem; }
   h2 { font-size: 1rem; }
@@ -472,15 +492,15 @@
   button:hover { border-color: var(--fg-dim); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   .settings-card { padding: var(--sp-4); border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elevated); }
-  .shortcut-card, .profiles-card { margin-bottom: var(--sp-4); }
-  .shortcut-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
+  .shortcut-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
   .toggle { grid-template-columns: auto auto; padding: var(--sp-1) var(--sp-2); }
   .toggle input { grid-row: auto; width: auto; height: auto; }
-  .capture { min-width: 14rem; font-family: var(--font-terminal); }
+  .capture { flex: 1 1 12rem; min-width: 0; font-family: var(--font-terminal); }
   .capture.capturing { border-color: var(--accent); color: var(--accent); }
   .shortcut-error { margin-top: var(--sp-2); color: #ff7b72; font-size: 0.85rem; }
   .bindings { display: flex; flex-direction: column; gap: var(--sp-1); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
-  .bindings li { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
+  .bindings li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
+  .bindings li > span { flex: 1 1 10rem; min-width: 0; }
   .bindings li.conflict { border-color: #ff7b72; }
   .events { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
   .events li { padding: var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
@@ -491,7 +511,7 @@
   .profiles li.invalid { border-color: #ff7b72; }
   .profiles .profile-fallback { padding: var(--sp-1) var(--sp-2); }
   .profile-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
-  .profile-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
+  .profile-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
   .profile-env { grid-column: 1 / -1; }
   /* The bare `label`/`input` rules below are sized for color swatches. */
   .profiles label { grid-template-columns: 1fr; align-items: stretch; }
@@ -509,7 +529,7 @@
   .green { color: #7ee787; }
   .yellow { color: #d29922; background: var(--terminal-selection); width: fit-content; }
   .cursor { width: 0.6ch; background: var(--terminal-cursor); }
-  .color-grid { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
+  .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
   .font-size { grid-template-columns: 1fr auto auto; width: fit-content; margin-top: var(--sp-2); }
   .font-size input { grid-row: auto; width: 4.5rem; height: auto; padding: var(--sp-1); border: 1px solid var(--border); color: var(--fg); background: var(--bg); }
   label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--sp-1); padding: var(--sp-2); border: 1px solid var(--border); border-radius: 4px; color: var(--fg-dim); font-size: 0.8rem; }
@@ -517,5 +537,12 @@
   code { color: var(--fg); font-size: 0.72rem; }
   .actions { margin-top: var(--sp-4); }
   .save { background: var(--accent); border-color: var(--accent); color: #fff; }
-  @media (max-width: 700px) { .settings-page { padding: var(--sp-3); } header, .card-heading { align-items: flex-start; flex-direction: column; } .preset-buttons { justify-content: flex-start; } .color-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .profile-fields { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 700px) {
+    .settings-page { padding: 0 var(--sp-3) var(--sp-3); }
+    header { margin: 0 calc(-1 * var(--sp-3)); padding: var(--sp-3); }
+    .cards { grid-template-columns: minmax(0, 1fr); }
+    header, .card-heading { align-items: flex-start; flex-direction: column; }
+    .preset-buttons { justify-content: flex-start; }
+    .profile-fields { grid-template-columns: minmax(0, 1fr); }
+  }
 </style>
