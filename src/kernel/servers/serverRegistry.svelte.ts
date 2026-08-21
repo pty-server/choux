@@ -288,7 +288,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
 
     const waitingPane = (sessionId: string): string | undefined => {
       for (const [key, state] of Object.entries(conn.agentStates)) {
-        if (state.sessionId === sessionId && state.activity === "waiting") return agentStatePane(key);
+        if (state.sessionId === sessionId && state.activity === "waiting" && state.stale !== true) return agentStatePane(key);
       }
       return undefined;
     };
@@ -598,7 +598,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     },
     reconcileAgentPanes(serverId, panes) {
       const conn = conns.get(serverId) as MutableServerConn | undefined;
-      if (conn === undefined || panes.length === 0) return;
+      if (conn === undefined || panes === undefined) return;
       const kept = Object.entries(conn.agentStates).filter(([key]) => {
         const pane = agentStatePane(key);
         return pane === undefined || panes.includes(pane);

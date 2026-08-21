@@ -14,10 +14,11 @@
   let activity = $derived(state?.activity ?? (awaitingApproval ? "waiting" : undefined));
   let label = $derived(state ? activityLabel(state) : "Awaiting approval");
   let detail = $derived(state ? activityDetail(state) : "");
+  let stale = $derived(state?.stale === true);
 </script>
 
 {#if agent || activity}
-  <span class="agent" title={state ? activityTitle(state) : label}>
+  <span class="agent" class:stale title={state ? activityTitle(state) : label}>
     {#if agent}
       <span class="badge">{agent}</span>
     {/if}
@@ -37,6 +38,10 @@
     align-items: center;
     gap: var(--sp-1);
     font-size: 0.75rem;
+  }
+
+  .agent.stale {
+    opacity: 0.5;
   }
 
   .badge {

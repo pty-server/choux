@@ -54,4 +54,11 @@ describe("activityTitle", () => {
   it("is just the label when there is neither", () => {
     expect(activityTitle(state({ activity: "idle" }))).toBe("Idle");
   });
+
+  it("says when a stale state last reported", () => {
+    const updatedAt = new Date("2026-08-19T10:00:00").getTime();
+    const title = activityTitle(state({ activity: "tool", tool: "Bash", updatedAt, stale: true }));
+
+    expect(title).toBe(`Running Bash - no update since ${new Date(updatedAt).toLocaleTimeString()}`);
+  });
 });

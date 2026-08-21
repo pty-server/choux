@@ -21,5 +21,8 @@ export function activityDetail(state: AgentState): string {
 }
 
 export function activityTitle(state: AgentState): string {
-  return [activityLabel(state), state.message ?? state.detail].filter(Boolean).join(" - ");
+  const staleNote = state.stale === true
+    ? `no update since ${new Date(state.updatedAt).toLocaleTimeString()}`
+    : "";
+  return [activityLabel(state), state.message ?? state.detail, staleNote].filter(Boolean).join(" - ");
 }

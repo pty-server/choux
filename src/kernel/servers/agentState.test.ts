@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentState } from "../../registry/types";
-import { AGENT_STATE_TTL_MS, isAgentStateData, reduceAgentState, sweepAgentStates } from "./agentState";
+import { AGENT_ACTIVE_STALE_MS, AGENT_STATE_TTL_MS, AGENT_WAITING_STALE_MS, isAgentStateData, isAgentStateStale, reduceAgentState, sweepAgentStates } from "./agentState";
 
 function event(name: string, at: number, extra: Record<string, unknown> = {}) {
   return { agent: "claude-code", event: name, at, ...extra } as never;
@@ -124,5 +124,49 @@ describe("sweepAgentStates", () => {
     const swept = sweepAgentStates({ "pane:%3": fresh, "pane:%4": stale }, 1_000_000 + AGENT_STATE_TTL_MS - 1);
 
     expect(swept).toEqual({ "pane:%3": fresh });
+  });
+
+  it("flags an active state that stopped reporting", () => {
+    const running = reduce(undefined, "PreToolUse", 1_000_000, { tool: "Bash" }) as AgentState;
+    const swept = sweepAgentStates({ "pane:%3": running }, 1_000_000 + AGENT_ACTIVE_STALE_MS);
+
+    expect(swept?.["pane:%3"]).toEqual({ ...running, stale: true });
+  });
+
+  it("keeps the reported activity when it goes stale", () => {
+    const running = reduce(undefined, "PreToolUse", 1_000_000, { tool: "Bash" }) as AgentState;
+    const swept = sweepAgentStates({ "pane:%3": running }, 1_000_000 + AGENT_ACTIVE_STALE_MS);
+
+    expect(swept?.["pane:%3"]?.activity).toBe("tool");
+    expect(swept?.["pane:%3"]?.tool).toBe("Bash");
+  });
+
+  it("clears the flag once the agent reports again", () => {
+    const flagged = { ...(reduce(undefined, "PreToolUse", 1_000_000, { tool: "Bash" }) as AgentState), stale: true };
+    const swept = sweepAgentStates({ "pane:%3": flagged }, 1_000_000 + 1);
+
+    expect(swept?.["pane:%3"]?.stale).toBe(false);
+  });
+
+  it("leaves an idle state alone", () => {
+    expect(sweepAgentStates({ "pane:%3": fresh }, 1_000_000 + AGENT_ACTIVE_STALE_MS)).toBeUndefined();
+  });
+});
+
+describe("isAgentStateStale", () => {
+  const at = 1_000_000;
+  const waiting = reduce(undefined, "PermissionRequest", at, { message: "Allow?" }) as AgentState;
+  const busy = reduce(undefined, "UserPromptSubmit", at) as AgentState;
+
+  it("gives a waiting state a longer grace than an active one", () => {
+    expect(isAgentStateStale(busy, at + AGENT_ACTIVE_STALE_MS)).toBe(true);
+    expect(isAgentStateStale(waiting, at + AGENT_ACTIVE_STALE_MS)).toBe(false);
+    expect(isAgentStateStale(waiting, at + AGENT_WAITING_STALE_MS)).toBe(true);
+  });
+
+  it("never calls an idle state stale", () => {
+    const idle = reduce(undefined, "Stop", at) as AgentState;
+
+    expect(isAgentStateStale(idle, at + AGENT_STATE_TTL_MS)).toBe(false);
   });
 });

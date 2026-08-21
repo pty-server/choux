@@ -107,20 +107,24 @@ describe("windowDetail", () => {
 });
 
 describe("parsePanes", () => {
-  it("maps every pane to its window and command", () => {
-    expect(parsePanes("%1\t@0\tbash\n%2\t@0\tclaude\n%3\t@1\tnvim\n")).toEqual([
-      { id: "%1", windowId: "@0", command: "bash" },
-      { id: "%2", windowId: "@0", command: "claude" },
-      { id: "%3", windowId: "@1", command: "nvim" },
+  it("maps every pane to its window, command and pid", () => {
+    expect(parsePanes("%1\t@0\tbash\t101\n%2\t@0\tclaude\t102\n%3\t@1\tnvim\t103\n")).toEqual([
+      { id: "%1", windowId: "@0", command: "bash", pid: "101" },
+      { id: "%2", windowId: "@0", command: "claude", pid: "102" },
+      { id: "%3", windowId: "@1", command: "nvim", pid: "103" },
     ]);
   });
 
   it("keeps a pane whose command is empty", () => {
-    expect(parsePanes("%1\t@0\t")).toEqual([{ id: "%1", windowId: "@0", command: "" }]);
+    expect(parsePanes("%1\t@0\t\t101")).toEqual([{ id: "%1", windowId: "@0", command: "", pid: "101" }]);
+  });
+
+  it("keeps a pane whose pid is missing", () => {
+    expect(parsePanes("%1\t@0\tbash")).toEqual([{ id: "%1", windowId: "@0", command: "bash", pid: "" }]);
   });
 
   it("skips blank and truncated lines", () => {
-    expect(parsePanes("\n%1\n%2\t@0\tbash\n")).toEqual([{ id: "%2", windowId: "@0", command: "bash" }]);
+    expect(parsePanes("\n%1\n%2\t@0\tbash\t102\n")).toEqual([{ id: "%2", windowId: "@0", command: "bash", pid: "102" }]);
   });
 
   it("returns nothing for empty output", () => {

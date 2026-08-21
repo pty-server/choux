@@ -5,6 +5,7 @@
   import type { AgentState } from "../../registry/types";
   import AgentStatusBadge from "./AgentStatusBadge.svelte";
   import { agentLabelFor } from "./agentDetect";
+  import { parseProcessRows, processListArgs, subtreeAgents } from "./processTree";
   import { clientsFormat, panesFormat, parsePanes, parseTty, parseWindows, sessionNameForTty, windowDetail, windowsFormat, type TmuxPane, type TmuxWindow } from "./tmuxParse";
   import { loadTmuxWindowListing } from "./tmuxWindows";
 
@@ -22,6 +23,7 @@
 
   let windows = $state<TmuxWindow[]>([]);
   let panes = $state<TmuxPane[]>([]);
+  let paneAgents = $state<Record<string, string> | undefined>(undefined);
   let tmuxSession: string | undefined;
 
   let agentStates = $derived(serverRegistry.get(serverId)?.agentStates ?? {});
@@ -40,7 +42,7 @@
 
   function agentNameIn(windowId: string): string | undefined {
     for (const pane of panesIn(windowId)) {
-      const label = agentLabelFor(pane.command);
+      const label = paneAgents?.[pane.id] ?? agentLabelFor(pane.command);
       if (label !== undefined) return label;
     }
     return undefined;
@@ -73,11 +75,31 @@
     return listing.windows;
   }
 
+  async function loadPaneAgents(listing: TmuxPane[]): Promise<Record<string, string> | undefined> {
+    const listed = await stdoutOrUndefined("ps", [...processListArgs]);
+    if (listed === undefined) return undefined;
+    const byPid = subtreeAgents(parseProcessRows(listed), listing.map((pane) => pane.pid));
+    const byPane: Record<string, string> = {};
+    for (const pane of listing) {
+      const label = byPid[pane.pid];
+      if (label !== undefined) byPane[pane.id] = label;
+    }
+    return byPane;
+  }
+
   async function loadPanes(): Promise<TmuxPane[]> {
     const listed = await stdoutOrUndefined("tmux", ["list-panes", "-a", "-F", panesFormat]);
-    if (listed === undefined) return panes;
+    if (listed === undefined) {
+      serverRegistry.reconcileAgentPanes(serverId, undefined);
+      return panes;
+    }
     const parsed = parsePanes(listed);
-    serverRegistry.reconcileAgentPanes(serverId, parsed.map((pane) => pane.id));
+    const agents = await loadPaneAgents(parsed);
+    paneAgents = agents;
+    serverRegistry.reconcileAgentPanes(
+      serverId,
+      agents === undefined ? parsed.map((pane) => pane.id) : Object.keys(agents),
+    );
     return parsed;
   }
 
@@ -93,6 +115,7 @@
     if (!execEnabled) {
       windows = [];
       panes = [];
+      paneAgents = undefined;
       return;
     }
     let cancelled = false;
@@ -107,6 +130,7 @@
         if (!cancelled) {
           windows = [];
           panes = [];
+          paneAgents = undefined;
         }
       }
     };

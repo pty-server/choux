@@ -13,6 +13,14 @@ export interface AgentStateData {
 }
 
 export const AGENT_STATE_TTL_MS = 10 * 60_000;
+export const AGENT_ACTIVE_STALE_MS = 90_000;
+export const AGENT_WAITING_STALE_MS = 5 * 60_000;
+
+export function isAgentStateStale(state: AgentState, now: number): boolean {
+  if (state.activity === "idle") return false;
+  const limit = state.activity === "waiting" ? AGENT_WAITING_STALE_MS : AGENT_ACTIVE_STALE_MS;
+  return now - state.updatedAt >= limit;
+}
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
@@ -94,6 +102,20 @@ export function sweepAgentStates(
   states: Readonly<Record<string, AgentState>>,
   now: number,
 ): Readonly<Record<string, AgentState>> | undefined {
-  const kept = Object.entries(states).filter(([, state]) => now - state.updatedAt < AGENT_STATE_TTL_MS);
-  return kept.length === Object.keys(states).length ? undefined : Object.fromEntries(kept);
+  let changed = false;
+  const kept: Record<string, AgentState> = {};
+  for (const [key, state] of Object.entries(states)) {
+    if (now - state.updatedAt >= AGENT_STATE_TTL_MS) {
+      changed = true;
+      continue;
+    }
+    const stale = isAgentStateStale(state, now);
+    if (stale === (state.stale ?? false)) {
+      kept[key] = state;
+      continue;
+    }
+    kept[key] = { ...state, stale };
+    changed = true;
+  }
+  return changed ? kept : undefined;
 }

@@ -99,6 +99,8 @@ export interface AgentState {
   readonly message?: string;
   readonly subagents: number;
   readonly updatedAt: number;
+  /** Set by the poll sweep once an active-looking state has gone too long without an event. */
+  readonly stale?: boolean;
 }
 
 /** A Choux-supported `choux.question` request awaiting a local response. */
@@ -195,8 +197,8 @@ export interface ServerRegistry {
   refresh(id: string): void;
   /** Rejects when the server advertises no `exec` capability, so callers must treat failure as "no data", not as an outage. */
   execSession(serverId: string, sessionId: string, body: ExecSessionRequest): Promise<ExecSessionResponse>;
-  /** Drops pane-keyed agent state for panes that no longer exist. An empty list is a no-op so a failed `tmux` call never wipes state. */
-  reconcileAgentPanes(serverId: string, panes: readonly string[]): void;
+  /** Drops pane-keyed agent state for panes that are gone or no longer run an agent process. `undefined` is a no-op so a failed `tmux`/`ps` call never wipes state. */
+  reconcileAgentPanes(serverId: string, panes: readonly string[] | undefined): void;
   /** Sends the correlated reply and removes the question when it was accepted locally. */
   answerQuestion(id: string, response: QuestionResponse): QuestionResponseResult;
 }

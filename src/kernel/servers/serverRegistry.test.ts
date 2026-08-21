@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION } from "@pty-server/protocol";
 import { ApiError, createApiClient } from "../transport/api";
 import { resetDbMemo } from "../storage/db";
+import { AGENT_WAITING_STALE_MS } from "./agentState";
 import { createServerRegistry } from "./serverRegistry.svelte";
 import { addServer, tokenStore } from "../storage/serverConfigStore";
 import { resetIndexedDB } from "../storage/setup";
@@ -718,11 +719,14 @@ describe("server registry agent state", () => {
     socket.onmessage?.({ data: stateEvent({ agent: "claude-code", event: "Stop", at: 10, pane: "%9" }) });
     socket.onmessage?.({ data: stateEvent({ agent: "codex", event: "Stop", at: 10 }) });
 
-    registry.reconcileAgentPanes(conn.config.id, []);
+    registry.reconcileAgentPanes(conn.config.id, undefined);
     expect(Object.keys(registry.get(conn.config.id)?.agentStates ?? {})).toHaveLength(3);
 
     registry.reconcileAgentPanes(conn.config.id, ["%3"]);
     expect(Object.keys(registry.get(conn.config.id)?.agentStates ?? {}).sort()).toEqual(["pane:%3", "session:session-1"]);
+
+    registry.reconcileAgentPanes(conn.config.id, []);
+    expect(Object.keys(registry.get(conn.config.id)?.agentStates ?? {})).toEqual(["session:session-1"]);
   });
 
   it("calls for attention once per transition into waiting", async () => {
@@ -758,6 +762,31 @@ describe("server registry agent state", () => {
     }) });
 
     expect(onAttention).toHaveBeenLastCalledWith({ serverId: conn.config.id, sessionId: "session-1", pane: "%7" });
+  });
+
+  it("stops borrowing a waiting pane once its state has gone stale", async () => {
+    const onAttention = vi.fn();
+    const { registry, sockets } = agentRegistry({ onAttention });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    const socket = await connectedSocket(sockets);
+
+    socket.onmessage?.({ data: stateEvent({
+      agent: "claude-code",
+      event: "PermissionRequest",
+      at: Date.now() - AGENT_WAITING_STALE_MS - 1,
+      pane: "%7",
+    }) });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(registry.get(conn.config.id)?.agentStates["pane:%7"]?.stale).toBe(true);
+
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
+      requestId: "request-1",
+      ttl: 0,
+      event: { sessionId: "session-1", type: "choux.question", data: { message: "Allow?", options: [{ id: "yes", label: "Yes" }] } },
+    }) });
+
+    expect(onAttention).toHaveBeenLastCalledWith({ serverId: conn.config.id, sessionId: "session-1" });
   });
 
   it("declines questions when handling is switched off, without queueing them", async () => {
