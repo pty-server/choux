@@ -114,11 +114,83 @@ def command_question(command: str) -> dict[str, Any]:
     )
 
 
+def patch_sections(patch: str) -> list[dict[str, Any]]:
+    """Split Codex's apply_patch envelope into file sections without applying it."""
+    headers = (
+        ("*** Update File: ", "update"),
+        ("*** Add File: ", "add"),
+        ("*** Delete File: ", "delete"),
+    )
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for line in patch.splitlines():
+        matched = next(((prefix, action) for prefix, action in headers if line.startswith(prefix)), None)
+        if matched is not None:
+            if current is not None:
+                sections.append(current)
+            prefix, action = matched
+            current = {"action": action, "path": line[len(prefix):].strip(), "lines": []}
+        elif current is not None and line.startswith("*** Move to: "):
+            current["move_to"] = line.removeprefix("*** Move to: ").strip()
+        elif current is not None and line == "*** End Patch":
+            sections.append(current)
+            current = None
+        elif current is not None and line == "*** End of File":
+            continue
+        elif current is not None:
+            current["lines"].append(line)
+    if current is not None:
+        sections.append(current)
+    return sections
+
+
+def diff_sides(lines: list[str], action: str) -> tuple[str, str]:
+    before: list[str] = []
+    after: list[str] = []
+    for line in lines:
+        if line.startswith("@@"):
+            if before or after:
+                before.append("⋯")
+                after.append("⋯")
+        elif line.startswith("+"):
+            after.append(line[1:])
+        elif line.startswith("-"):
+            before.append(line[1:])
+        elif line.startswith(" "):
+            before.append(line[1:])
+            after.append(line[1:])
+        elif action == "add":
+            after.append(line)
+        elif action == "delete":
+            before.append(line)
+    return clipped("\n".join(before)), clipped("\n".join(after))
+
+
+def patch_blocks(patch: str) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for section in patch_sections(patch):
+        path = section.get("move_to") or section["path"]
+        before, after = diff_sides(section["lines"], section["action"])
+        if before or after:
+            block: dict[str, Any] = {"kind": "diff", "path": path, "before": before, "after": after}
+            if section.get("move_to"):
+                block["badges"] = [f"moved from {section['path']}"]
+            blocks.append(block)
+        elif section["action"] == "delete" and section["path"]:
+            blocks.append({
+                "kind": "fields",
+                "title": "Delete a file",
+                "fields": [{"label": "File", "value": section["path"]}],
+            })
+    return blocks
+
+
 def patch_question(patch: str) -> dict[str, Any]:
+    blocks = patch_blocks(patch)
     return question(
         "Apply a patch",
         "Codex wants to change files.",
-        [{"kind": "command", "command": clipped(patch), "badges": ["patch"]}],
+        blocks or [{"kind": "command", "command": clipped(patch), "badges": ["patch"]}],
     )
 
 

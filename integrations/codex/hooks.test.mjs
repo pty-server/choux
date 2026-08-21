@@ -198,9 +198,18 @@ describe("choux_permission_request.py", () => {
     expect(data.title).toBe("Run a command");
   });
 
-  it("previews a patch without applying it, and clips a huge one", async () => {
+  it("renders apply_patch updates as the same native diff blocks used by Claude Code", async () => {
     fakePtys([{ exit: 0, stdout: '{"answer":"deny"}' }]);
-    const patch = `*** Begin Patch\n${"x".repeat(9000)}\n*** End Patch`;
+    const patch = `*** Begin Patch
+*** Update File: src/app.ts
+@@
+-const port = 3000
++const port = 8080
+*** Add File: src/ready.ts
++export const ready = true;
+*** End of File
+*** Delete File: obsolete.txt
+*** End Patch`;
     const target = join(workDir, "untouched.txt");
     writeFileSync(target, "original");
     await run(PERMISSION_SCRIPT, JSON.stringify({
@@ -209,11 +218,27 @@ describe("choux_permission_request.py", () => {
       tool_input: { command: patch },
     }), { PTYS_EVENT_ENDPOINT: "http://127.0.0.1:1/v1/events" });
 
+    expect(question().data.blocks).toEqual([
+      { kind: "diff", path: "src/app.ts", before: "const port = 3000", after: "const port = 8080" },
+      { kind: "diff", path: "src/ready.ts", before: "", after: "export const ready = true;" },
+      { kind: "fields", title: "Delete a file", fields: [{ label: "File", value: "obsolete.txt" }] },
+    ]);
+    expect(readFileSync(target, "utf8")).toBe("original");
+  });
+
+  it("falls back to a clipped raw patch when its envelope is not recognised", async () => {
+    fakePtys([{ exit: 0, stdout: '{"answer":"deny"}' }]);
+    const patch = `*** Begin Patch\n${"x".repeat(9000)}\n*** End Patch`;
+    await run(PERMISSION_SCRIPT, JSON.stringify({
+      ...bashRequest,
+      tool_name: "apply_patch",
+      tool_input: { command: patch },
+    }), { PTYS_EVENT_ENDPOINT: "http://127.0.0.1:1/v1/events" });
+
     const [block] = question().data.blocks;
-    expect(block.badges).toEqual(["patch"]);
+    expect(block).toMatchObject({ kind: "command", badges: ["patch"] });
     expect(block.command.length).toBeLessThan(patch.length);
     expect(block.command).toContain("[truncated]");
-    expect(readFileSync(target, "utf8")).toBe("original");
   });
 
   it("sends an unknown structured tool as allowlisted fields", async () => {
@@ -326,6 +351,10 @@ describe("hooks.json", () => {
     expect(reporter.timeout).toBeLessThanOrEqual(5);
   });
 
+  it("respects Codex's three-second SessionEnd timeout ceiling", () => {
+    expect(entries("SessionEnd")[0].timeout).toBe(3);
+  });
+
   it("omits the matcher only where Codex ignores it", () => {
     for (const [event, groups] of Object.entries(config.hooks)) {
       for (const group of groups) {
@@ -334,7 +363,7 @@ describe("hooks.json", () => {
     }
   });
 
-  it("declares no async handler, which Codex command hooks do not support", () => {
+  it("keeps status reporting and permission decisions synchronous", () => {
     expect(JSON.stringify(config)).not.toContain('"async"');
   });
 });

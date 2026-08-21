@@ -71,13 +71,16 @@ Upgrading from an earlier copy of this integration means recopying
 `choux_permission_request.py`. An installed script that emits `ptys.question`
 rather than `choux.question` predates the rename and Choux ignores it.
 
-A `Bash` request is sent as a `command` block; `apply_patch` as a `command` block
-carrying the patch text with a badge, since Codex hands over the patch rather
-than the resulting file. Neither block claims a working directory - Codex reports
-the turn's `cwd`, which is not necessarily where the command runs. Every other
-tool, including MCP and extension tools under their own canonical names, is sent
-as a `fields` block built from an allowlist of useful arguments, falling back to
-a clipped preview. A note left on **Deny** becomes the reason Codex is given.
+A `Bash` request is sent as a `command` block. For `apply_patch`, the bridge
+splits Codex's patch envelope by file and converts each change to the same native
+`diff` block used by the Claude Code integration. New and updated files therefore
+use Choux's inline diff display; delete-only sections use a labelled file field,
+and an unrecognised patch falls back to a clipped raw preview. The command block
+does not claim a working directory - Codex reports the turn's `cwd`, which is not
+necessarily where the command runs. Every other tool, including MCP and extension
+tools under their own canonical names, is sent as a `fields` block built from an
+allowlist of useful arguments, falling back to a clipped preview. A note left on
+**Deny** becomes the reason Codex is given.
 
 The dialog offers **Allow** and **Deny** only. Codex's `PermissionRequest` hook
 accepts nothing else - a persistent rule or a changed permission mode would be
