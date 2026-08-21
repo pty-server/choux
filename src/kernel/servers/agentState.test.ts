@@ -101,8 +101,61 @@ describe("reduceAgentState", () => {
     expect(reduce(previous, "SessionEnd", 20)).toBeUndefined();
   });
 
-  it("reports compaction", () => {
-    expect(reduce(undefined, "PreCompact", 10)?.activity).toBe("compacting");
+  it("reports compaction and returns to work when it finishes", () => {
+    const compacting = reduce(undefined, "PreCompact", 10);
+    expect(compacting?.activity).toBe("compacting");
+
+    expect(reduce(compacting, "PostCompact", 20)?.activity).toBe("busy");
+  });
+
+  it("counts a reported subagent start without disturbing the current activity", () => {
+    let state = reduce(undefined, "PreToolUse", 10, { agent: "codex", tool: "Bash", detail: "npm test" });
+    state = reduce(state, "SubagentStart", 20);
+
+    expect(state).toMatchObject({ subagents: 1, activity: "tool", tool: "Bash", detail: "npm test" });
+  });
+
+  it("counts nested subagent starts and never falls below zero", () => {
+    let state = reduce(undefined, "SubagentStart", 10, { agent: "codex" });
+    state = reduce(state, "SubagentStart", 20, { agent: "codex" });
+    expect(state?.subagents).toBe(2);
+
+    state = reduce(state, "SubagentStop", 30, { agent: "codex" });
+    state = reduce(state, "SubagentStop", 40, { agent: "codex" });
+    state = reduce(state, "SubagentStop", 50, { agent: "codex" });
+    expect(state?.subagents).toBe(0);
+  });
+
+  it("clears transient state and subagents when a Codex run stops", () => {
+    let state = reduce(undefined, "PermissionRequest", 10, { agent: "codex", tool: "Bash", detail: "rm -rf build", message: "Approve?" });
+    state = reduce(state, "SubagentStart", 20, { agent: "codex" });
+    state = reduce(state, "Stop", 30, { agent: "codex" });
+
+    expect(state).toMatchObject({ activity: "idle", tool: undefined, detail: undefined, message: undefined, subagents: 0 });
+  });
+
+  it("waits on a Codex permission request without losing the tool it names", () => {
+    let state = reduce(undefined, "PreToolUse", 10, { agent: "codex", tool: "apply_patch", detail: "*** Begin Patch" });
+    state = reduce(state, "PermissionRequest", 20, { agent: "codex", message: "Codex needs your approval to use apply_patch" });
+
+    expect(state).toMatchObject({
+      activity: "waiting",
+      tool: "apply_patch",
+      detail: "*** Begin Patch",
+      message: "Codex needs your approval to use apply_patch",
+    });
+  });
+
+  it("drops a Codex entry on SessionEnd", () => {
+    const previous = reduce(undefined, "UserPromptSubmit", 10, { agent: "codex" });
+
+    expect(reduce(previous, "SessionEnd", 20, { agent: "codex" })).toBeUndefined();
+  });
+
+  it("ignores a Codex event that arrives out of order", () => {
+    const previous = reduce(undefined, "Stop", 50, { agent: "codex" });
+
+    expect(reduce(previous, "SubagentStart", 20, { agent: "codex" })).toBe(previous);
   });
 
   it("keeps an unknown event alive without changing the activity", () => {

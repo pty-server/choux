@@ -1,10 +1,20 @@
 {
-  "description": "Offer Codex permission requests in Choux when Codex runs inside a Ptys session.",
+  "description": "Show Codex activity and permission requests in Choux when Codex runs inside a Ptys session.",
   "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
     "PermissionRequest": [
       {
         "matcher": "*",
         "hooks": [
+          { "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 },
           {
             "type": "command",
             "command": "python3 ~/.codex/hooks/choux_permission_request.py",
@@ -13,6 +23,27 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "PreCompact": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "PostCompact": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "SubagentStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "SubagentStop": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
+    ],
+    "SessionEnd": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 ~/.codex/hooks/choux_agent_state.py", "timeout": 5 }] }
     ]
   }
 }

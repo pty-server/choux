@@ -5,9 +5,9 @@ These integrations forward agent permission requests to Choux through a Ptys
 unavailable, the dialog is cancelled, or an integration fails, the agent falls
 back to its own normal permission prompt.
 
-Claude Code and OpenCode each have a second, optional integration that reports
-what the agent is doing as a `choux.agent.state` event, so Choux can show a live
-status next to the right session - and, in tmux, next to the right window.
+Claude Code, Codex, and OpenCode each have a second, optional integration that
+reports what the agent is doing as a `choux.agent.state` event, so Choux can show
+a live status next to the right session - and, in tmux, next to the right window.
 
 ## Requirements
 
@@ -49,16 +49,64 @@ install emits `choux.agent.state` events.
 
 ## Codex
 
-Copy the script and merge the contents of `codex/hooks.json` into
+Copy both scripts and merge the contents of `codex/hooks.json` into
 `~/.codex/hooks.json`:
 
 ```bash
 mkdir -p ~/.codex/hooks
 cp integrations/codex/choux_permission_request.py ~/.codex/hooks/
+cp integrations/codex/choux_agent_state.py ~/.codex/hooks/
 ```
 
-The command in the hook configuration assumes this destination. Start a new
-Codex session after installing it and enable/trust the hook if Codex asks.
+The commands in the hook configuration assume this destination. Merge rather than
+replace: keep any unrelated hooks you already have, and where `PermissionRequest`
+already exists keep both Choux handlers in that group's `hooks` array. Codex
+launches every matching command hook for an event concurrently, so their order in
+that array decides nothing - what matters is that both are there. The reporter
+posts the waiting state while the bridge sits on the question, and returns no
+decision of its own, so it cannot affect the outcome. Start a new Codex session
+afterwards and enable/trust the hooks if Codex asks.
+
+Upgrading from an earlier copy of this integration means recopying
+`choux_permission_request.py`. An installed script that emits `ptys.question`
+rather than `choux.question` predates the rename and Choux ignores it.
+
+A `Bash` request is sent as a `command` block; `apply_patch` as a `command` block
+carrying the patch text with a badge, since Codex hands over the patch rather
+than the resulting file. Neither block claims a working directory - Codex reports
+the turn's `cwd`, which is not necessarily where the command runs. Every other
+tool, including MCP and extension tools under their own canonical names, is sent
+as a `fields` block built from an allowlist of useful arguments, falling back to
+a clipped preview. A note left on **Deny** becomes the reason Codex is given.
+
+The dialog offers **Allow** and **Deny** only. Codex's `PermissionRequest` hook
+accepts nothing else - a persistent rule or a changed permission mode would be
+rejected outright - so there is deliberately no "don't ask again" here.
+
+The question carries `origin.agentSessionId`, so ending the Codex run withdraws
+anything it left waiting. It carries no `origin.toolUseId`: Codex's permission
+payload has no tool-call identifier, and a fabricated one would withdraw the
+wrong question. A Codex question therefore stays up until it is answered, the run
+ends, or the request times out.
+
+The bridge waits 60 seconds for an answer, under the 65-second hook timeout.
+`CHOUX_QUESTION_TIMEOUT_SECONDS` overrides that; raise the hook's own `timeout`
+alongside it, or Codex gives up first.
+
+### Agent status
+
+`choux_agent_state.py` is wired to every Codex lifecycle hook, so Choux shows the
+run as idle, working, waiting, compacting, or on a named tool, and counts its
+subagents. It posts directly to the Ptys control socket - no `ptys` process per
+event - and always exits 0 without writing to stdout, so it cannot disturb Codex.
+
+Codex does not emit `PreToolUse`/`PostToolUse` for every internal tool, so the
+coarse working/idle state comes from `UserPromptSubmit` and `Stop`; tool events
+sharpen it when they arrive. There is also no failed-tool event, so a tool that
+fails can stay on screen until the next lifecycle event or the stale-state sweep.
+
+Inside tmux the reporter tags each event with `$TMUX_PANE`, which is what lets
+Choux attribute status to a single window instead of the whole session.
 
 ## Claude Code
 
@@ -184,7 +232,8 @@ request approved in OpenCode leaves its Choux dialog up until the timeout.
 
 ## Files
 
-- `codex/` — Codex `PermissionRequest` hook and its hook configuration.
+- `codex/` — Codex `PermissionRequest` hook, the `choux.agent.state` reporter,
+  their hook configuration, and the tests covering both scripts.
 - `claude-code/` — Claude Code `PermissionRequest` hook and settings entry,
   plus the optional `choux.agent.state` reporter and its settings entry.
 - `opencode/` — OpenCode `permission.asked` plugin and permission settings,

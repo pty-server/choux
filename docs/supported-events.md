@@ -74,6 +74,12 @@ the run merely moved on is not treated as an answer, because the run may be
 starting the next of those calls. Questions without an `origin`, without a
 `toolUseId`, and those from other agent runs, survive until answered or expired.
 
+An agent whose permission request carries no tool-call identifier - Codex's does
+not - should still send `agentSessionId`, and must not invent a `toolUseId`: an
+identifier that matches no real tool call withdraws nothing, and one guessed from
+a tool name withdraws the wrong question. The run-end rule then does the work,
+which is enough for an agent that asks about one call at a time.
+
 `notes` controls the free-text note field. Send `false` to present the options alone, for a request where a note has nowhere to go. It defaults to `true`, so a request that omits it still offers the note.
 
 ### Send with the Ptys CLI
@@ -94,7 +100,11 @@ ptys event --request --timeout 60 '{
 }'
 ```
 
-`--timeout` is in seconds. Use `--timeout 0` to wait indefinitely. Ptys prints the reply event envelope as JSON. A finite timeout arrives as the request's `ttl`, and the dialog counts it down; an unlimited request shows no countdown.
+`--timeout` is in seconds. Use `--timeout 0` to wait indefinitely. The CLI prints
+the reply event's `data` alone - `{ "answer": … }` or `{ "cancelled": true }` -
+not the envelope the HTTP endpoint returns. A finite timeout arrives as the
+request's `ttl`, and the dialog counts it down; an unlimited request shows no
+countdown.
 
 ### Send with `PTYS_EVENT_ENDPOINT`
 
@@ -107,7 +117,8 @@ Applications set `timeoutSeconds`; they do not send `ttl`. Ptys includes `ttl` o
 
 ### Read the response
 
-A selected option returns:
+The HTTP endpoint returns the reply as an envelope; `ptys event --request` prints
+only its `data`. A selected option returns:
 
 ```json
 {
@@ -179,18 +190,25 @@ client covers every window in that client, so without a pane Choux can only
 attribute the state to the whole session. Pass it whenever the reporter knows
 it.
 
-Choux understands these Claude Code `event` names and ignores any other:
+Choux understands these `event` names and ignores any other. They are hook names
+Claude Code and Codex share; an agent with a different lifecycle should map onto
+the closest of them rather than invent a name, which would simply be dropped.
 
 | `event` | Shown as |
 | --- | --- |
-| `SessionStart` | Idle |
-| `UserPromptSubmit`, `PostToolUse` | Working |
-| `PreToolUse` | the `tool` name; `Task` also counts a subagent |
+| `SessionStart` | Idle, with no subagents |
+| `UserPromptSubmit`, `PostToolUse`, `PostCompact` | Working |
+| `PreToolUse` | the `tool` name; a `Task` tool also counts a subagent |
 | `PermissionRequest`, `Notification` | Awaiting approval |
+| `SubagentStart` | one more subagent |
 | `SubagentStop` | one fewer subagent |
 | `PreCompact` | Compacting |
-| `Stop` | Idle |
+| `Stop` | Idle, with no subagents |
 | `SessionEnd` | the entry is dropped |
+
+An agent that reports subagents explicitly sends `SubagentStart`; Claude Code has
+no such hook, so its `Task` tool call is counted instead. Do not send both for
+one subagent.
 
 Keep `detail` short - it is a one-line hint, not a payload. Do not send file
 contents or diffs.

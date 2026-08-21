@@ -79,6 +79,7 @@ export function reduceAgentState(
         subagents: data.tool === "Task" ? carried.subagents + 1 : carried.subagents,
       };
     case "PostToolUse":
+    case "PostCompact":
       return { ...fresh, activity: "busy" };
     case "PermissionRequest":
     case "Notification": {
@@ -94,6 +95,8 @@ export function reduceAgentState(
     }
     case "Stop":
       return { ...fresh, activity: "idle", subagents: 0 };
+    case "SubagentStart":
+      return { ...carried, subagents: carried.subagents + 1 };
     case "SubagentStop":
       return { ...carried, subagents: Math.max(0, carried.subagents - 1) };
     case "PreCompact":
