@@ -137,10 +137,14 @@ def suggested_options(request: dict[str, Any]) -> tuple[list[dict[str, Any]], di
 
 
 def origin_for(request: dict[str, Any]) -> dict[str, Any]:
-    """Lets Choux withdraw the question when this same Claude Code run reports it
-    moved on - the request was answered in its IDE dialog instead."""
+    """Lets Choux withdraw the question when this same Claude Code run reports this
+    exact tool call settled - the request was answered in its IDE dialog instead."""
     origin: dict[str, Any] = {"agent": "claude-code"}
-    for key, value in (("agentSessionId", request.get("session_id")), ("tool", request.get("tool_name"))):
+    for key, value in (
+        ("agentSessionId", request.get("session_id")),
+        ("tool", request.get("tool_name")),
+        ("toolUseId", request.get("tool_use_id")),
+    ):
         if isinstance(value, str) and value:
             origin[key] = value
     return origin

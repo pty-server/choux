@@ -135,6 +135,8 @@ export interface QuestionOrigin {
   readonly agent: string;
   readonly agentSessionId?: string;
   readonly tool?: string;
+  /** The single tool call this question guards, so a later report about that exact call withdraws this question and no other. */
+  readonly toolUseId?: string;
 }
 
 export type QuestionBlock = QuestionCommandBlock | QuestionFieldsBlock | QuestionDiffBlock;

@@ -163,6 +163,36 @@ describe("server registry polling", () => {
 });
 
 describe("server registry event stream", () => {
+  const ask = (requestId: string, agentSessionId: string, toolUseId: string): string => JSON.stringify({
+    t: "event",
+    requestId,
+    ttl: 0,
+    event: {
+      sessionId: "session-1",
+      type: "choux.question",
+      data: {
+        message: "Write a file?",
+        options: [{ id: "allow", label: "Allow" }],
+        origin: { agent: "claude-code", agentSessionId, tool: "Write", toolUseId },
+      },
+    },
+  });
+
+  const agentState = (event: string, agentSessionId: string, toolUseId: string | undefined): string => JSON.stringify({
+    t: "event",
+    event: {
+      sessionId: "session-1",
+      type: "choux.agent.state",
+      data: {
+        agent: "claude-code",
+        event,
+        at: Date.now(),
+        agentSessionId,
+        ...(toolUseId === undefined ? {} : { toolUseId, tool: "Write" }),
+      },
+    },
+  });
+
   it("queues Ptys questions globally and replies with an option or note", async () => {
     const sockets: MockEventSocket[] = [];
     const onAttention = vi.fn();
@@ -324,35 +354,12 @@ describe("server registry event stream", () => {
     if (!socket) throw new Error("Expected an event socket");
     socket.readyState = 1;
 
-    const ask = (requestId: string, agentSessionId: string): string => JSON.stringify({
-      t: "event",
-      requestId,
-      ttl: 0,
-      event: {
-        sessionId: "session-1",
-        type: "choux.question",
-        data: {
-          message: "Write a file?",
-          options: [{ id: "allow", label: "Allow" }],
-          origin: { agent: "claude-code", agentSessionId, tool: "Write" },
-        },
-      },
-    });
-    const state = (event: string, agentSessionId: string): string => JSON.stringify({
-      t: "event",
-      event: {
-        sessionId: "session-1",
-        type: "choux.agent.state",
-        data: { agent: "claude-code", event, at: Date.now(), agentSessionId },
-      },
-    });
-
-    socket.onmessage?.({ data: ask("request-1", "agent-a") });
-    socket.onmessage?.({ data: ask("request-2", "agent-b") });
-    socket.onmessage?.({ data: state("PermissionRequest", "agent-a") });
+    socket.onmessage?.({ data: ask("request-1", "agent-a", "call-1") });
+    socket.onmessage?.({ data: ask("request-2", "agent-b", "call-2") });
+    socket.onmessage?.({ data: agentState("PermissionRequest", "agent-a", "call-1") });
     expect(registry.pendingQuestions).toHaveLength(2);
 
-    socket.onmessage?.({ data: state("PostToolUse", "agent-a") });
+    socket.onmessage?.({ data: agentState("PostToolUse", "agent-a", "call-1") });
 
     expect(registry.pendingQuestions.map((question) => question.origin?.agentSessionId)).toEqual(["agent-b"]);
     expect(socket.sent.map((message) => JSON.parse(message))).toEqual([
@@ -361,6 +368,63 @@ describe("server registry event stream", () => {
         requestId: "request-1",
         event: { type: "choux.question.answer", data: { cancelled: true } },
       },
+    ]);
+  });
+
+  it("keeps a queued question when the same agent run starts its next tool call", async () => {
+    const sockets: MockEventSocket[] = [];
+    const registry = createServerRegistry({
+      createClient: () => clientWith({ sessions: [{ id: "session-1", name: "Agent" }] }),
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 1000,
+    });
+    await registry.addServer({ url: "http://one.test", token: "one", label: "Local" });
+    await settle();
+    const socket = sockets[0];
+    if (!socket) throw new Error("Expected an event socket");
+    socket.readyState = 1;
+
+    socket.onmessage?.({ data: agentState("PreToolUse", "agent-a", "call-1") });
+    socket.onmessage?.({ data: agentState("PermissionRequest", "agent-a", "call-1") });
+    socket.onmessage?.({ data: ask("request-1", "agent-a", "call-1") });
+    socket.onmessage?.({ data: agentState("PreToolUse", "agent-a", "call-2") });
+    socket.onmessage?.({ data: agentState("PermissionRequest", "agent-a", "call-2") });
+    socket.onmessage?.({ data: ask("request-2", "agent-a", "call-2") });
+
+    expect(registry.pendingQuestions.map((question) => question.origin?.toolUseId)).toEqual(["call-1", "call-2"]);
+    expect(socket.sent).toEqual([]);
+  });
+
+  it("withdraws every question of a run that ended", async () => {
+    const sockets: MockEventSocket[] = [];
+    const registry = createServerRegistry({
+      createClient: () => clientWith({ sessions: [{ id: "session-1", name: "Agent" }] }),
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 1000,
+    });
+    await registry.addServer({ url: "http://one.test", token: "one", label: "Local" });
+    await settle();
+    const socket = sockets[0];
+    if (!socket) throw new Error("Expected an event socket");
+    socket.readyState = 1;
+
+    socket.onmessage?.({ data: ask("request-1", "agent-a", "call-1") });
+    socket.onmessage?.({ data: ask("request-2", "agent-a", "call-2") });
+    socket.onmessage?.({ data: ask("request-3", "agent-b", "call-3") });
+    socket.onmessage?.({ data: agentState("Stop", "agent-a", undefined) });
+
+    expect(registry.pendingQuestions.map((question) => question.origin?.agentSessionId)).toEqual(["agent-b"]);
+    expect(socket.sent.map((message) => JSON.parse(message))).toEqual([
+      { t: "event.reply", requestId: "request-1", event: { type: "choux.question.answer", data: { cancelled: true } } },
+      { t: "event.reply", requestId: "request-2", event: { type: "choux.question.answer", data: { cancelled: true } } },
     ]);
   });
 

@@ -278,7 +278,11 @@
     focusServerId={manageFocusServerId}
     onClose={() => { showManageServers = false; manageFocusServerId = undefined; }}
   />
-  <QuestionDialog question={activeQuestion} onRespond={(id, response) => serverRegistry.answerQuestion(id, response)} />
+  <QuestionDialog
+    question={activeQuestion}
+    queued={serverRegistry.pendingQuestions.length - 1}
+    onRespond={(id, response) => serverRegistry.answerQuestion(id, response)}
+  />
 </div>
 
 <style>

@@ -4,10 +4,11 @@
 
   interface Props {
     question: PendingQuestion | undefined;
+    queued?: number;
     onRespond: (id: string, response: { answer: string; note?: string } | { cancelled: true; note?: string }) => QuestionResponseResult;
   }
 
-  let { question, onRespond }: Props = $props();
+  let { question, queued = 0, onRespond }: Props = $props();
   let note = $state("");
   let error = $state("");
   let dialog = $state<HTMLDivElement>();
@@ -75,7 +76,10 @@
           <div class="bar" style:width="{remainingFraction * 100}%"></div>
         </div>
       {/if}
-      <div class="source">{question.serverLabel} · {question.sessionLabel}</div>
+      <div class="source">
+        <span>{question.serverLabel} · {question.sessionLabel}</span>
+        {#if queued > 0}<span class="queued">{queued} more waiting</span>{/if}
+      </div>
       <h2 id="question-title">{question.title || "Question"}</h2>
       <p id="question-message" class="message">{question.message}</p>
       {#if question.blocks.length > 0}
@@ -144,7 +148,8 @@
   .overlay { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: var(--sp-4); background: rgba(0, 0, 0, 0.6); }
   .dialog { box-sizing: border-box; width: min(600px, 100%); max-height: calc(100dvh - 2rem); display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); color: var(--fg); background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35); overflow: hidden; }
   .dialog.wide { width: min(960px, 100%); }
-  .source { color: var(--fg-dim); font-size: 0.75rem; overflow-wrap: anywhere; }
+  .source { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); color: var(--fg-dim); font-size: 0.75rem; overflow-wrap: anywhere; }
+  .queued { flex: 0 0 auto; padding: 1px var(--sp-2); border: 1px solid var(--border); border-radius: 999px; }
   h2, p { margin: 0; }
   h2 { font-size: 1rem; }
   .message { flex: 0 1 auto; min-height: 0; padding-right: var(--sp-1); white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; line-height: 1.45; }

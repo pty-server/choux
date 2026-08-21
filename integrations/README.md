@@ -96,9 +96,11 @@ A note left on **No** is passed back as the reason Claude Code is given.
 Claude Code keeps its own approval open next to this one - the IDE integration
 shows a diff for `Edit` and `Write` - and it does not stop the hook when that
 one is answered, so the hook would sit on a dead request for its full minute.
-The question therefore carries `origin.agentSessionId`, and the state reporter
-sends the same id. When Claude Code reports that this run moved on, Choux
-answers the question as cancelled and the hook exits at once. Install both
+The question therefore carries `origin.agentSessionId` and `origin.toolUseId`,
+and the state reporter sends both. When Claude Code reports that same tool call
+finished, or that the run ended, Choux answers the question as cancelled and the
+hook exits at once. Matching the tool call rather than the run keeps questions
+from a parallel tool batch queued - each stays until it is answered. Install both
 integrations to get that; the permission hook alone still works, but a request
 approved in the IDE leaves its Choux dialog up until the timeout.
 

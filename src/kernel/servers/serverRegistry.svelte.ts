@@ -18,7 +18,7 @@ import {
 } from "../storage/serverConfigStore";
 import { tokenStore } from "../storage/tokenStore";
 import { agentStateKey, agentStatePane } from "../../registry/agentStateKey";
-import { isAgentStateData, reduceAgentState, sweepAgentStates } from "./agentState";
+import { isAgentStateData, reduceAgentState, sweepAgentStates, type AgentStateData } from "./agentState";
 import type {
   PendingQuestion,
   QuestionBlock,
@@ -30,6 +30,9 @@ import type {
 } from "../../registry/types";
 
 export const POLL_INTERVAL_MS = 5000;
+
+const RUN_END_EVENTS = new Set(["Stop", "SessionEnd", "SessionStart"]);
+const TOOL_SETTLED_EVENTS = new Set(["PostToolUse", "PostToolUseFailure", "PermissionDenied"]);
 
 function isEventData(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -149,6 +152,7 @@ function questionOrigin(value: unknown): QuestionOrigin | undefined {
     agent: value.agent,
     ...(typeof value.agentSessionId === "string" && value.agentSessionId.length > 0 ? { agentSessionId: value.agentSessionId } : {}),
     ...(typeof value.tool === "string" && value.tool.length > 0 ? { tool: value.tool } : {}),
+    ...(typeof value.toolUseId === "string" && value.toolUseId.length > 0 ? { toolUseId: value.toolUseId } : {}),
   };
 }
 
@@ -251,10 +255,21 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
   };
 
   /** An agent that reports work after asking answered its own question elsewhere - a
-   * permission dialog in its IDE, say. Withdraw ours so the sender stops waiting. */
-  const withdrawAnsweredQuestions = (serverId: string, agentSessionId: string): void => {
+   * permission dialog in its IDE, say. Withdraw ours so the sender stops waiting.
+   *
+   * Only a report that names the very tool call a question guards, or the end of the
+   * whole run, counts. A run that simply moves on says nothing about a question still
+   * queued behind another one: agents ask about several tool calls at once, and taking
+   * a later `PreToolUse` as an answer dropped every question waiting its turn. */
+  const withdrawAnsweredQuestions = (serverId: string, data: AgentStateData): void => {
+    const agentSessionId = data.agentSessionId;
+    if (agentSessionId === undefined) return;
+    const runEnded = RUN_END_EVENTS.has(data.event);
+    const answeredToolUseId = runEnded ? undefined : data.toolUseId;
+    if (!runEnded && (answeredToolUseId === undefined || !TOOL_SETTLED_EVENTS.has(data.event))) return;
     for (const question of pendingQuestions) {
       if (question.serverId !== serverId || question.origin?.agentSessionId !== agentSessionId) continue;
+      if (!runEnded && question.origin?.toolUseId !== answeredToolUseId) continue;
       questionReplies.get(question.id)?.({ cancelled: true });
       removeQuestion(question.id);
     }
@@ -306,6 +321,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         const key = agentStateKey(event.sessionId, event.data.pane);
         const previous = conn.agentStates[key];
         const next = reduceAgentState(previous, event.sessionId, event.data);
+        withdrawAnsweredQuestions(config.id, event.data);
         if (next === previous) return;
         const states = { ...conn.agentStates };
         if (next === undefined) delete states[key];
@@ -313,9 +329,6 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         conn.agentStates = states;
         if (next?.activity === "waiting" && previous?.activity !== "waiting") {
           notifyAttention(event.sessionId, next.pane);
-        }
-        if (next?.activity !== "waiting" && event.data.agentSessionId !== undefined) {
-          withdrawAnsweredQuestions(config.id, event.data.agentSessionId);
         }
         return;
       }

@@ -56,14 +56,23 @@ must stop waiting, and the sending process cannot always say so itself.
 Send `origin` with the question to let Choux resolve that:
 
 ```json
-{ "agent": "claude-code", "agentSessionId": "0f3c…", "tool": "Write" }
+{ "agent": "claude-code", "agentSessionId": "0f3c…", "tool": "Write", "toolUseId": "toolu_01ABC…" }
 ```
 
-`agent` is required, the rest optional. When a `choux.agent.state` event carries
-the same `agentSessionId` and reports anything other than waiting for approval,
-Choux answers the matching questions with `{ "cancelled": true }` and closes the
-dialog: an agent that has moved on already got its answer elsewhere. Questions
-without an `origin`, and those from other agent runs, are untouched.
+`agent` is required, the rest optional. A question is withdrawn - answered with
+`{ "cancelled": true }` - when a `choux.agent.state` event from the same
+`agentSessionId` either
+
+- reports `PostToolUse`, `PostToolUseFailure` or `PermissionDenied` carrying the
+  question's own `toolUseId`: that one tool call was settled elsewhere, or
+- reports `Stop`, `SessionEnd` or `SessionStart`: the run is over, so nothing it
+  asked is still awaited.
+
+Nothing else withdraws a question. An agent asking about several tool calls at
+once keeps every one of them queued, and each is answered in turn; a report that
+the run merely moved on is not treated as an answer, because the run may be
+starting the next of those calls. Questions without an `origin`, without a
+`toolUseId`, and those from other agent runs, survive until answered or expired.
 
 `notes` controls the free-text note field. Send `false` to present the options alone, for a request where a note has nowhere to go. It defaults to `true`, so a request that omits it still offers the note.
 
@@ -155,6 +164,7 @@ reporting hook is safe to run when Choux is closed.
   "cwd": "/home/you/project",
   "agentSessionId": "0f3c…",
   "tool": "Bash",
+  "toolUseId": "toolu_01ABC…",
   "detail": "npm test",
   "message": "Claude needs your permission to use Bash"
 }

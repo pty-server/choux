@@ -117,6 +117,7 @@ def state_for(request: dict[str, Any]) -> dict[str, Any]:
         ("cwd", request.get("cwd")),
         ("agentSessionId", request.get("session_id")),
         ("tool", request.get("tool_name")),
+        ("toolUseId", request.get("tool_use_id")),
         ("detail", detail_for(request.get("tool_name"), request.get("tool_input"))),
         ("message", request.get("message")),
     ):
