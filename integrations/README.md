@@ -26,6 +26,26 @@ set -ga update-environment " PTYS_EVENT_ENDPOINT"
 Detach and attach tmux from a Ptys session, then create a new window or pane.
 Existing processes do not receive a newly added environment variable.
 
+`update-environment` also keeps the tmux-tracked value current after a server
+restart. Both integrations read it in preference to their own environment,
+because a pane outlives the server that spawned it and keeps a token that is no
+longer valid. Without the setting the tmux value is as stale as the inherited
+one, so it is load-bearing for panes that are already running, not only for
+fresh ones.
+
+A stale token is rejected by the server rather than reported as an error, so
+nothing appears in Choux and nothing is written anywhere. To check an endpoint:
+
+```bash
+curl -si -X POST "$PTYS_EVENT_ENDPOINT" \
+  -H 'content-type: application/json' \
+  -d '{"type":"choux.agent.state","data":{"agent":"probe"},"request":false}' | head -1
+```
+
+`202` means the token is live; `401 unauthorized` means it is stale. Running
+`ptys event-listener` while the agent uses a tool is the other check - a healthy
+install emits `choux.agent.state` events.
+
 ## Codex
 
 Copy the script and merge the contents of `codex/hooks.json` into
@@ -103,6 +123,10 @@ Inside tmux the reporter tags each event with `$TMUX_PANE`, which is what lets
 Choux attribute status to a single window instead of the whole session. Panes
 that started before `update-environment` was set have no endpoint and report
 nothing - see the requirements above.
+
+Like the permission hook, it prefers the tmux-tracked endpoint over its own
+environment and falls back to the inherited one, treating any non-2xx answer as
+a failed delivery.
 
 ## OpenCode
 

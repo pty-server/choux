@@ -15,6 +15,10 @@ from urllib.parse import urlsplit
 TIMEOUT_SECONDS = 0.5
 DETAIL_LENGTH = 256
 
+class DeliveryFailed(Exception):
+    pass
+
+
 DETAIL_KEYS = {
     "Bash": "command",
     "Write": "file_path",
@@ -58,7 +62,11 @@ def publish(endpoint: str, data: dict[str, Any]) -> None:
 
     try:
         connection.request("POST", path, body, {"content-type": "application/json"})
-        connection.getresponse().read()
+        response = connection.getresponse()
+        status = response.status
+        response.read()
+        if not 200 <= status < 300:
+            raise DeliveryFailed(f"endpoint answered {status}")
     finally:
         connection.close()
 
@@ -74,6 +82,13 @@ def tmux_endpoint() -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return output.split("=", 1)[1] if output.startswith("PTYS_EVENT_ENDPOINT=") else None
+
+
+def endpoint_candidates() -> list[str]:
+    """A tmux pane outlives the server that spawned it, so the inherited endpoint
+    can point at a dead URL. Tmux tracks the live value - prefer it inside tmux."""
+    ordered = [tmux_endpoint(), os.environ.get("PTYS_EVENT_ENDPOINT")]
+    return list(dict.fromkeys(value for value in ordered if value))
 
 
 def clipped(value: object) -> str | None:
@@ -111,24 +126,19 @@ def state_for(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    inherited = os.environ.get("PTYS_EVENT_ENDPOINT")
-    if not inherited and not os.environ.get("TMUX"):
+    if not os.environ.get("PTYS_EVENT_ENDPOINT") and not os.environ.get("TMUX"):
         return
     request = json.load(sys.stdin)
     if not isinstance(request, dict) or not isinstance(request.get("hook_event_name"), str):
         return
     data = state_for(request)
 
-    if inherited:
+    for endpoint in endpoint_candidates():
         try:
-            publish(inherited, data)
+            publish(endpoint, data)
             return
-        except (OSError, ValueError, http.client.HTTPException):
-            pass
-
-    live = tmux_endpoint()
-    if live and live != inherited:
-        publish(live, data)
+        except (OSError, ValueError, http.client.HTTPException, DeliveryFailed):
+            continue
 
 
 if __name__ == "__main__":
