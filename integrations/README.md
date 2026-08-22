@@ -5,17 +5,18 @@ These integrations forward agent permission requests to Choux through a Ptys
 unavailable, the dialog is cancelled, or an integration fails, the agent falls
 back to its own normal permission prompt.
 
-Claude Code has a second, optional integration that reports what it is doing as
-a `choux.agent.state` event, so Choux can show a live status next to the right
-session - and, in tmux, next to the right window.
+Claude Code and OpenCode each have a second, optional integration that reports
+what the agent is doing as a `choux.agent.state` event, so Choux can show a live
+status next to the right session - and, in tmux, next to the right window.
 
 ## Requirements
 
 - Ptys and Choux are running, with Choux connected to the originating Ptys
   server.
 - Start the agent inside a Ptys session, so `PTYS_EVENT_ENDPOINT` is set.
-- `ptys` must be discoverable from the agent process. The OpenCode integration
-  also checks the login shell's PATH.
+- `ptys` must be discoverable from the agent process. The OpenCode permission
+  plugin also checks the login shell's PATH, because OpenCode can inherit a PATH
+  that the terminal only extends once its login shell starts.
 
 When using tmux, propagate the endpoint before starting a fresh agent process:
 
@@ -27,7 +28,7 @@ Detach and attach tmux from a Ptys session, then create a new window or pane.
 Existing processes do not receive a newly added environment variable.
 
 `update-environment` also keeps the tmux-tracked value current after a server
-restart. Both integrations read it in preference to their own environment,
+restart. All three integrations read it in preference to their own environment,
 because a pane outlives the server that spawned it and keeps a token that is no
 longer valid. Without the setting the tmux value is as stale as the inherited
 one, so it is load-bearing for panes that are already running, not only for
@@ -142,12 +143,49 @@ cp integrations/opencode/choux-permission.js ~/.config/opencode/plugins/
 
 The included `permission` entries make Bash and file edits ask for approval;
 without them OpenCode normally allows most actions without a prompt. Restart
-OpenCode after installing the plugin. The integration grants a single OpenCode
-approval only; it does not create an "always allow" rule.
+OpenCode after installing the plugin.
+
+A `bash` request is sent as a `command` block, so Choux shows the command in a
+monospace panel with the project directory. An `edit` request is sent as a
+`diff` block - OpenCode describes the change as a unified patch, which the
+plugin splits back into the two sides the dialog diffs. `read`, `webfetch`,
+`task` and `external_directory` are sent as a `fields` block. Every other
+permission keeps the plain text rendering.
+
+Beyond **Yes** and **No**, the dialog offers **Yes, don't ask again** whenever
+OpenCode says the request can be remembered - it answers `always`, which is
+OpenCode's own persistent approval, so the rule it writes is the one OpenCode
+would have written itself. **Yes** grants a single approval only.
+
+A note left on **No** is passed back as the reason OpenCode is given.
+
+### Agent status
+
+To also show OpenCode's activity in Choux's session list, install the state
+reporter plugin as well:
+
+```bash
+cp integrations/opencode/choux-agent-state.js ~/.config/opencode/plugins/
+```
+
+It reports every prompt, tool call, permission request and idle turn, mapped
+onto the same event names the Claude Code reporter sends, so the session list
+and the tmux window list treat both agents alike. Like that reporter it posts
+directly to the Ptys control socket - no `ptys` process per event - prefers the
+tmux-tracked endpoint, tags each event with `$TMUX_PANE`, and swallows its own
+failures so it cannot disturb the agent.
+
+OpenCode keeps its own approval open next to this one, and answering there does
+not stop the plugin waiting on ours. The question therefore carries
+`origin.agentSessionId` and `origin.toolUseId`, and the state reporter sends
+both, so a request answered in OpenCode withdraws its Choux dialog at once.
+Install both plugins to get that; the permission plugin alone still works, but a
+request approved in OpenCode leaves its Choux dialog up until the timeout.
 
 ## Files
 
 - `codex/` — Codex `PermissionRequest` hook and its hook configuration.
 - `claude-code/` — Claude Code `PermissionRequest` hook and settings entry,
   plus the optional `choux.agent.state` reporter and its settings entry.
-- `opencode/` — OpenCode `permission.asked` plugin and permission settings.
+- `opencode/` — OpenCode `permission.asked` plugin and permission settings,
+  plus the optional `choux.agent.state` reporter plugin.
