@@ -81,7 +81,9 @@ export function reduceAgentState(
     case "PostToolUse":
       return { ...fresh, activity: "busy" };
     case "PermissionRequest":
-    case "Notification":
+    case "Notification": {
+      const idlePromptReminder = data.event === "Notification" && carried.activity === "idle";
+      if (idlePromptReminder) return carried;
       return {
         ...carried,
         activity: "waiting",
@@ -89,6 +91,7 @@ export function reduceAgentState(
         detail: data.detail ?? carried.detail,
         message: data.message ?? carried.message,
       };
+    }
     case "Stop":
       return { ...fresh, activity: "idle", subagents: 0 };
     case "SubagentStop":

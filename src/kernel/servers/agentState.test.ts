@@ -62,6 +62,20 @@ describe("reduceAgentState", () => {
     expect(state).toMatchObject({ message: undefined, tool: undefined, detail: undefined });
   });
 
+  it("keeps an idle session idle when Claude Code nags about an empty prompt", () => {
+    let state = reduce(undefined, "Stop", 10);
+    state = reduce(state, "Notification", 20, { message: "Claude is waiting for your input" });
+
+    expect(state).toMatchObject({ activity: "idle", updatedAt: 20 });
+  });
+
+  it("raises a Notification to waiting while a turn is still running", () => {
+    let state = reduce(undefined, "PreToolUse", 10, { tool: "Bash", detail: "npm test" });
+    state = reduce(state, "Notification", 20, { message: "Claude needs your permission to use Bash" });
+
+    expect(state).toMatchObject({ activity: "waiting", tool: "Bash", message: "Claude needs your permission to use Bash" });
+  });
+
   it("counts a Task tool as a subagent and stops at zero", () => {
     let state = reduce(undefined, "PreToolUse", 10, { tool: "Task" });
     state = reduce(state, "PreToolUse", 20, { tool: "Task" });
