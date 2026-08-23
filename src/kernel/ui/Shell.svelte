@@ -256,6 +256,8 @@
         onReorderSession={reorderSession}
         {onStartDefaultSession}
         {onNewSession}
+        {sessionProfiles}
+        {onLaunchProfile}
         onClose={() => (sidebarCollapsed = true)}
       />
     {/if}

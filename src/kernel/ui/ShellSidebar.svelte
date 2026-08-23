@@ -5,6 +5,7 @@
   import { basename } from "../../registry/basename";
   import { defaultSidebarWidth, maxSidebarWidth, minSidebarWidth } from "../storage/sidebarWidthStore";
   import type { ChromeSlotItem, SessionDropPosition } from "../../registry/types";
+  import type { SessionProfile } from "../../registry/sessionProfiles";
 
   interface Props {
     selectedWorkspace: Workspace | undefined;
@@ -23,6 +24,8 @@
     onReorderSession?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
+    sessionProfiles?: SessionProfile[];
+    onLaunchProfile?: (profileId: string) => void;
     onClose: () => void;
   }
 
@@ -43,6 +46,8 @@
     onReorderSession,
     onStartDefaultSession,
     onNewSession,
+    sessionProfiles = [],
+    onLaunchProfile,
     onClose,
   }: Props = $props();
 
@@ -83,6 +88,11 @@
   }
 </script>
 
+<svelte:window
+  onclick={() => (showNewSessionMenu = false)}
+  onkeydown={(event) => { if (event.key === "Escape") showNewSessionMenu = false; }}
+/>
+
 <button
   type="button"
   class="drawer-backdrop"
@@ -104,12 +114,18 @@
         class="new-session-menu-toggle"
         aria-label="New session options"
         aria-expanded={showNewSessionMenu}
-        onclick={() => (showNewSessionMenu = !showNewSessionMenu)}
+        onclick={(event) => { event.stopPropagation(); showNewSessionMenu = !showNewSessionMenu; }}
       >
         &#9662;
       </button>
       {#if showNewSessionMenu}
         <div class="new-session-menu" role="menu">
+          {#each sessionProfiles as profile (profile.id)}
+            <button type="button" role="menuitem" onclick={() => { showNewSessionMenu = false; onLaunchProfile?.(profile.id); }}>{profile.name}</button>
+          {/each}
+          {#if sessionProfiles.length > 0}
+            <div class="new-session-menu-separator"></div>
+          {/if}
           <button type="button" role="menuitem" onclick={() => { showNewSessionMenu = false; onNewSession(); }}>Configure session…</button>
         </div>
       {/if}
@@ -268,6 +284,12 @@
 
   .new-session-menu button:hover {
     background: var(--bg);
+  }
+
+  .new-session-menu-separator {
+    height: 1px;
+    margin: var(--sp-1) 0;
+    background: var(--border);
   }
 
   .sidebar-empty {
