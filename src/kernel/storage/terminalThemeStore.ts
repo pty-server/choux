@@ -20,7 +20,7 @@ function normalizeTheme(value: unknown): TerminalTheme {
 
 function normalizeSettings(value: unknown): TerminalSettings {
   if (!value || typeof value !== "object") {
-    return { theme: { ...defaultTerminalTheme }, fontSize: defaultTerminalFontSize };
+    return { theme: { ...defaultTerminalTheme }, fontSize: defaultTerminalFontSize, copyOnSelect: false };
   }
   const saved = value as Record<string, unknown>;
   // Color-only values were saved before font size was configurable.
@@ -30,6 +30,7 @@ function normalizeSettings(value: unknown): TerminalSettings {
   return {
     theme: normalizeTheme(saved.theme ?? saved),
     fontSize,
+    copyOnSelect: saved.copyOnSelect === true,
   };
 }
 
@@ -59,6 +60,6 @@ export async function getTerminalTheme(): Promise<TerminalTheme> {
 }
 
 export async function saveTerminalTheme(theme: TerminalTheme): Promise<void> {
-  const { fontSize } = await getTerminalSettings();
-  await saveTerminalSettings({ theme, fontSize });
+  const { fontSize, copyOnSelect } = await getTerminalSettings();
+  await saveTerminalSettings({ theme, fontSize, copyOnSelect });
 }

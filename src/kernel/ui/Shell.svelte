@@ -8,6 +8,7 @@
   import type { SessionProfile } from "../../registry/sessionProfiles";
   import { protocolMismatch } from "../transport/protocolVersion";
   import { buildRailModel } from "./railModel";
+  import { activeTerminalClipboard } from "./terminalClipboard";
   import { accentPalette } from "../storage/serverConfigStore";
   import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
   import { getSessionOrder, orderSessions, reorderSessionIds, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
@@ -137,6 +138,9 @@
   registry.registerCommand({ id: "sidebar.toggle", title: "Toggle sidebar", run: () => { sidebarCollapsed = !sidebarCollapsed; } });
   registry.registerCommand({ id: "rail.toggle", title: "Toggle rail", run: () => { void toggleRail(); } });
   registry.registerCommand({ id: "settings.open", title: "Open settings", run: () => { if (!settingsOpen) onToggleSettings(); } });
+  registry.registerCommand({ id: "terminal.copy", title: "Copy selection", run: () => { void activeTerminalClipboard()?.copySelection(); } });
+  registry.registerCommand({ id: "terminal.paste", title: "Paste into terminal", run: () => { void activeTerminalClipboard()?.paste(); } });
+  registry.registerCommand({ id: "terminal.selectAll", title: "Select all in terminal", run: () => activeTerminalClipboard()?.selectAll() });
 
   $effect(() => {
     function handleKeydown(event: KeyboardEvent) {

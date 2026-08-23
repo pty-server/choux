@@ -222,6 +222,7 @@
 
   function isDirty() {
     return draft.fontSize !== settings.fontSize
+      || draft.copyOnSelect !== settings.copyOnSelect
       || Object.keys(draft.theme).some((key) => draft.theme[key as TerminalColorKey] !== settings.theme[key as TerminalColorKey]);
   }
 </script>
@@ -418,6 +419,16 @@
       <span>px</span>
     </label>
 
+    <h3>Selection</h3>
+    <label class="toggle copy-on-select">
+      <input
+        type="checkbox"
+        checked={draft.copyOnSelect}
+        onchange={(event) => draft = { ...draft, copyOnSelect: event.currentTarget.checked }}
+      />
+      <span>Copy to the clipboard as soon as text is selected</span>
+    </label>
+
     <div class="preview" style={`--terminal-bg: ${draft.theme.background}; --terminal-fg: ${draft.theme.foreground}; --terminal-cursor: ${draft.theme.cursor}; --terminal-selection: ${draft.theme.selectionBackground}; font-size: ${draft.fontSize}px;`}>
       <span>~/workspace $ </span><span class="prompt">git status</span>
       <span class="green">On branch main</span>
@@ -531,6 +542,7 @@
   .cursor { width: 0.6ch; background: var(--terminal-cursor); }
   .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
   .font-size { grid-template-columns: 1fr auto auto; width: fit-content; margin-top: var(--sp-2); }
+  .copy-on-select { width: fit-content; margin-top: var(--sp-2); }
   .font-size input { grid-row: auto; width: 4.5rem; height: auto; padding: var(--sp-1); border: 1px solid var(--border); color: var(--fg); background: var(--bg); }
   label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--sp-1); padding: var(--sp-2); border: 1px solid var(--border); border-radius: 4px; color: var(--fg-dim); font-size: 0.8rem; }
   input { grid-row: span 2; width: 34px; height: 30px; padding: 0; border: none; background: transparent; cursor: pointer; }

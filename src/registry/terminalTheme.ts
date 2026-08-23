@@ -27,6 +27,7 @@ export type TerminalTheme = Required<Pick<ITheme, TerminalColorKey>>;
 export interface TerminalSettings {
   theme: TerminalTheme;
   fontSize: number;
+  copyOnSelect: boolean;
 }
 
 export const defaultTerminalFontSize = 15;
@@ -57,6 +58,7 @@ export const defaultTerminalTheme: TerminalTheme = {
 export const defaultTerminalSettings: TerminalSettings = {
   theme: defaultTerminalTheme,
   fontSize: defaultTerminalFontSize,
+  copyOnSelect: false,
 };
 
 export const terminalThemePresets: { name: string; theme: TerminalTheme }[] = [

@@ -23,6 +23,7 @@
     "@pty-server/protocol": "next",
     "@sveltejs/vite-plugin-svelte": "6.2.4",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-deep-link": "^2.4.9",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@xterm/addon-fit": "^0.11.0",

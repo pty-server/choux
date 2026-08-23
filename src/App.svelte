@@ -23,6 +23,7 @@
   import { getEventSettings, saveEventSettings } from "./kernel/storage/eventSettingsStore";
   import { defaultEventSettings, type EventSettings } from "./registry/eventSettings";
   import { revealAndFocusCurrentWindow } from "./kernel/platform/windowAttention";
+  import { suppressNativeContextMenu } from "./kernel/platform/nativeContextMenu";
   import type { AttentionTarget } from "./kernel/servers/serverRegistry.svelte";
   import { getKeybindingOverrides, saveKeybindingOverrides } from "./kernel/storage/keybindingStore";
   import { isMacPlatform } from "./kernel/extensibility/keydispatch";
@@ -105,6 +106,7 @@
   onMount(() => {
     let disposed = false;
     let unlisten = () => {};
+    const restoreNativeContextMenu = suppressNativeContextMenu();
 
     void (async () => {
       try {
@@ -133,6 +135,7 @@
     return () => {
       disposed = true;
       unlisten();
+      restoreNativeContextMenu();
     };
   });
 
@@ -543,6 +546,7 @@
                 serverId={conn.config.id}
                 theme={terminalSettings.theme}
                 fontSize={terminalSettings.fontSize}
+                copyOnSelect={terminalSettings.copyOnSelect}
                 {layoutRevision}
                 onDims={handleFocusedDims}
                 onConnectionState={handleFocusedConnectionState}

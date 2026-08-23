@@ -7,25 +7,40 @@ import {
 } from "./keybindings";
 
 describe("keybindings", () => {
-  it("binds only the palette out of the box, per platform", () => {
-    expect(resolveKeybindings({}, false)).toEqual({ "palette.open": "Control+Shift+KeyK" });
-    expect(resolveKeybindings({}, true)).toEqual({ "palette.open": "Super+KeyK" });
+  it("binds the palette and the clipboard out of the box, per platform", () => {
+    expect(resolveKeybindings({}, false)).toEqual({
+      "palette.open": "Control+Shift+KeyK",
+      "terminal.copy": "Control+Shift+KeyC",
+      "terminal.paste": "Control+Shift+KeyV",
+    });
+    expect(resolveKeybindings({}, true)).toEqual({
+      "palette.open": "Super+KeyK",
+      "terminal.copy": "Super+KeyC",
+      "terminal.paste": "Super+KeyV",
+    });
   });
 
   it("applies an override and drops a deliberately unbound command", () => {
-    expect(resolveKeybindings({ "palette.open": null, "session.new": "Control+Alt+KeyN" }, false)).toEqual({
+    const overrides = {
+      "palette.open": null,
       "session.new": "Control+Alt+KeyN",
-    });
+      "terminal.copy": null,
+      "terminal.paste": null,
+    };
+
+    expect(resolveKeybindings(overrides, false)).toEqual({ "session.new": "Control+Alt+KeyN" });
   });
 
   it("ignores an override that is not a usable chord", () => {
-    expect(resolveKeybindings({ "palette.open": "Shift+KeyK" }, false)).toEqual({});
+    expect(resolveKeybindings({ "palette.open": "Shift+KeyK", "terminal.copy": null, "terminal.paste": null }, false))
+      .toEqual({});
   });
 
   it("ignores an override for a command that is not bindable", () => {
-    expect(resolveKeybindings({ "nope.cmd": "Control+Alt+KeyN" }, false)).toEqual({
-      "palette.open": "Control+Shift+KeyK",
-    });
+    expect(resolveKeybindings({ "nope.cmd": "Control+Alt+KeyN", "terminal.copy": null, "terminal.paste": null }, false))
+      .toEqual({
+        "palette.open": "Control+Shift+KeyK",
+      });
   });
 
   it("inverts the table for key dispatch", () => {
@@ -47,6 +62,9 @@ describe("keybindings", () => {
   it("lists every command the shell and palette register", () => {
     expect(bindableCommands.map((command) => command.commandId)).toEqual([
       "palette.open",
+      "terminal.copy",
+      "terminal.paste",
+      "terminal.selectAll",
       "session.new",
       "workspace.add",
       "settings.open",

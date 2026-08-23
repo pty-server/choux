@@ -12,6 +12,14 @@
   import type { TerminalTheme } from "../../registry/terminalTheme";
   import { isTauriRuntime } from "../storage/tokenStore";
   import { localPtysSocket } from "../transport/localPtys";
+  import { readClipboardText, writeClipboardText } from "../platform/clipboard";
+  import {
+    clearActiveTerminalClipboard,
+    decodeOsc52,
+    needsMultilinePasteConfirm,
+    setActiveTerminalClipboard,
+    type TerminalClipboardTarget,
+  } from "./terminalClipboard";
 
   const bundledTerminalFont = "LiterationMono Nerd Font Mono";
 
@@ -32,17 +40,20 @@
     lossy?: boolean;
     theme: TerminalTheme;
     fontSize: number;
+    copyOnSelect?: boolean;
     layoutRevision?: number;
     onDims?: (dims: { cols: number; rows: number }) => void;
     onConnectionState?: (state: "attaching" | "online" | "reconnecting" | "offline" | "exited") => void;
     onProtocolMismatch?: (serverProtocol: number) => void;
   }
 
-  let { baseUrl, localInstance, token, sessionId, serverId, readonly, lossy, theme, fontSize, layoutRevision, onDims, onConnectionState, onProtocolMismatch }: Props = $props();
+  let { baseUrl, localInstance, token, sessionId, serverId, readonly, lossy, theme, fontSize, copyOnSelect = false, layoutRevision, onDims, onConnectionState, onProtocolMismatch }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state(undefined);
   let terminal: Terminal | undefined = $state(undefined);
   let requestResize = $state<(() => void) | undefined>(undefined);
+  let contextMenu = $state<{ x: number; y: number; hasSelection: boolean } | undefined>(undefined);
+  let pendingPaste = $state<string | undefined>(undefined);
 
   let cols = $state(0);
   let rows = $state(0);
@@ -71,6 +82,114 @@
 
     window.open(url, "_blank", "noopener,noreferrer");
   }
+
+  const nativePasteWindowMs = 300;
+  let lastNativePasteAt = 0;
+
+  async function copySelection(): Promise<boolean> {
+    const text = terminal?.getSelection();
+    if (!text) return false;
+    try {
+      await writeClipboardText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function writeToTerminal(text: string): void {
+    terminal?.paste(text);
+    terminal?.focus();
+  }
+
+  function applyPaste(text: string): void {
+    if (!terminal || readonly || text.length === 0) return;
+    if (needsMultilinePasteConfirm(text, terminal.modes.bracketedPasteMode)) {
+      pendingPaste = text;
+      return;
+    }
+    writeToTerminal(text);
+  }
+
+  async function pasteFromClipboard(): Promise<void> {
+    if (readonly) return;
+    try {
+      applyPaste(await readClipboardText());
+    } catch {
+      // No clipboard permission or an empty clipboard - nothing to paste.
+    }
+  }
+
+  function pasteFromSelection(): void {
+    const selection = terminal?.getSelection();
+    if (selection) applyPaste(selection);
+    else void pasteFromClipboard();
+  }
+
+  function confirmPendingPaste(): void {
+    const text = pendingPaste;
+    pendingPaste = undefined;
+    if (text !== undefined) writeToTerminal(text);
+  }
+
+  function appGrabsMouse(event: MouseEvent): boolean {
+    // xterm itself lets Shift bypass mouse reporting, so Shift always means
+    // "this gesture is for Choux, not for the program in the pty".
+    return !event.shiftKey && terminal !== undefined && terminal.modes.mouseTrackingMode !== "none";
+  }
+
+  function handleContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    if (appGrabsMouse(event)) {
+      contextMenu = undefined;
+      return;
+    }
+    contextMenu = {
+      x: Math.min(event.clientX, window.innerWidth - 176),
+      y: Math.min(event.clientY, window.innerHeight - 128),
+      hasSelection: terminal?.hasSelection() ?? false,
+    };
+  }
+
+  // Native pastes (Ctrl+V, middle click) go through the same path as Choux's
+  // own, so the multi-line guard cannot be sidestepped by the gesture used.
+  function handlePaste(event: ClipboardEvent): void {
+    lastNativePasteAt = Date.now();
+    const text = event.clipboardData?.getData("text/plain");
+    if (text === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    applyPaste(text);
+  }
+
+  function handleMouseUp(): void {
+    if (copyOnSelect && terminal?.hasSelection()) void copySelection();
+  }
+
+  function handleAuxClick(event: MouseEvent): void {
+    if (event.button !== 1 || readonly || appGrabsMouse(event)) return;
+    // WebKitGTK pastes the X11 primary selection into xterm's textarea on its
+    // own - before or shortly after this click. Only step in when it did not.
+    window.setTimeout(() => {
+      if (Date.now() - lastNativePasteAt > nativePasteWindowMs) pasteFromSelection();
+    }, 60);
+  }
+
+  function runMenuCommand(action: () => void): void {
+    contextMenu = undefined;
+    action();
+  }
+
+  $effect(() => {
+    if (!terminal) return;
+    const target: TerminalClipboardTarget = {
+      copySelection,
+      paste: pasteFromClipboard,
+      selectAll: () => terminal?.selectAll(),
+    };
+    setActiveTerminalClipboard(target);
+    return () => clearActiveTerminalClipboard(target);
+  });
 
   $effect(() => {
     onDims?.({ cols, rows });
@@ -122,6 +241,14 @@
     term.loadAddon(new ImageAddon({ enableSizeReports: false }));
     term.loadAddon(new WebLinksAddon((_event, uri) => openTerminalUrl(uri)));
     term.unicode.activeVersion = "11";
+
+    // OSC 52 is what makes copying work without a mouse: tmux `set-clipboard on`
+    // and TUI applications send yanked text here. Reads are never answered.
+    term.parser.registerOscHandler(52, (data) => {
+      const text = decodeOsc52(data);
+      if (text !== undefined) void writeClipboardText(text).catch(() => {});
+      return true;
+    });
 
     let disposed = false;
     let controller: AttachController | undefined;
@@ -215,13 +342,80 @@
   });
 </script>
 
+<svelte:window
+  onclick={() => contextMenu = undefined}
+  onkeydown={(event) => { if (event.key === "Escape") contextMenu = undefined; }}
+/>
+
 <!-- Session details live in the status bar (Shell.svelte) to avoid duplicating
      them in the terminal pane. -->
 <div class="pane" style:background={theme.background}>
   <div class="container">
-    <div class="terminal-container" bind:this={container}></div>
+    <div
+      class="terminal-container"
+      bind:this={container}
+      oncontextmenu={handleContextMenu}
+      onauxclick={handleAuxClick}
+      onmouseup={handleMouseUp}
+      onpastecapture={handlePaste}
+    ></div>
   </div>
 </div>
+
+{#if contextMenu}
+  <div class="context-menu" role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>
+    <button
+      type="button"
+      role="menuitem"
+      disabled={!contextMenu.hasSelection}
+      onclick={() => runMenuCommand(() => void copySelection())}
+    >Copy</button>
+    <button
+      type="button"
+      role="menuitem"
+      disabled={readonly}
+      onclick={() => runMenuCommand(() => void pasteFromClipboard())}
+    >Paste</button>
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => runMenuCommand(() => terminal?.selectAll())}
+    >Select all</button>
+    <button
+      type="button"
+      role="menuitem"
+      disabled={!contextMenu.hasSelection}
+      onclick={() => runMenuCommand(() => terminal?.clearSelection())}
+    >Clear selection</button>
+  </div>
+{/if}
+
+{#if pendingPaste !== undefined}
+  <div
+    class="overlay"
+    role="presentation"
+    onclick={() => pendingPaste = undefined}
+    onkeydown={(event) => { if (event.key === "Escape") pendingPaste = undefined; }}
+  >
+    <div
+      class="dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="paste-warning-title"
+      tabindex="-1"
+      onclick={(event) => event.stopPropagation()}
+      onkeydown={(event) => { if (event.key === "Escape") pendingPaste = undefined; }}
+    >
+      <h2 id="paste-warning-title">Paste {pendingPaste.split("\n").length} lines?</h2>
+      <p>Bracketed paste is off in this session, so every line runs as soon as it lands.</p>
+      <pre>{pendingPaste.length > 400 ? `${pendingPaste.slice(0, 400)}…` : pendingPaste}</pre>
+      <div class="actions">
+        <button type="button" onclick={() => pendingPaste = undefined}>Cancel</button>
+        <button type="button" class="confirm" onclick={confirmPendingPaste}>Paste</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .pane {
@@ -253,5 +447,104 @@
 
   .terminal-container :global(.xterm) {
     margin: auto;
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 200;
+    min-width: 170px;
+    padding: var(--sp-1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  }
+
+  .context-menu button {
+    width: 100%;
+    padding: var(--sp-2);
+    border: none;
+    border-radius: 2px;
+    background: none;
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .context-menu button:disabled {
+    color: var(--fg-dim);
+    cursor: default;
+  }
+
+  .context-menu button:hover:not(:disabled),
+  .context-menu button:focus-visible:not(:disabled) {
+    background: var(--bg);
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .dialog {
+    min-width: 360px;
+    max-width: 90vw;
+    padding: var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elevated);
+    color: var(--fg);
+  }
+
+  .dialog h2 {
+    margin-bottom: var(--sp-2);
+    font-size: 1rem;
+  }
+
+  .dialog p {
+    margin-bottom: var(--sp-3);
+    color: var(--fg-dim);
+  }
+
+  .dialog pre {
+    max-height: 30vh;
+    padding: var(--sp-2);
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    font-family: var(--font-terminal, monospace);
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+    margin-top: var(--sp-3);
+  }
+
+  .actions button {
+    padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .actions button.confirm {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--bg);
   }
 </style>

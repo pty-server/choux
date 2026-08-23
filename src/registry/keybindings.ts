@@ -13,6 +13,17 @@ export const bindableCommands: readonly BindableCommand[] = [
     title: "Open command palette",
     defaultAccelerator: (isMac) => (isMac ? "Super+KeyK" : "Control+Shift+KeyK"),
   },
+  {
+    commandId: "terminal.copy",
+    title: "Copy selection",
+    defaultAccelerator: (isMac) => (isMac ? "Super+KeyC" : "Control+Shift+KeyC"),
+  },
+  {
+    commandId: "terminal.paste",
+    title: "Paste into terminal",
+    defaultAccelerator: (isMac) => (isMac ? "Super+KeyV" : "Control+Shift+KeyV"),
+  },
+  { commandId: "terminal.selectAll", title: "Select all in terminal" },
   { commandId: "session.new", title: "New session" },
   { commandId: "workspace.add", title: "Add workspace" },
   { commandId: "settings.open", title: "Open settings" },
