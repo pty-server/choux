@@ -172,9 +172,9 @@
   });
 
   $effect(() => {
-    if (workspaces.length > 0 && selectedWorkspaceId === undefined) {
-      selectedWorkspaceId = workspaces[0].id;
-    }
+    if (conn?.status !== "online") return;
+    if (selectedWorkspaceId !== undefined && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
+    selectedWorkspaceId = workspaces[0]?.id;
   });
 
   $effect(() => {
