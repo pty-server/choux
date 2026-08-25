@@ -143,14 +143,27 @@
     >⚙</button>
   {#if isTauriWindow()}
     <div class="window-controls" aria-label="Window controls">
-      <button type="button" class="window-control" aria-label="Minimize window" onclick={minimizeWindow}>−</button>
+      <button type="button" class="window-control" aria-label="Minimize window" onclick={minimizeWindow}>
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" /></svg>
+      </button>
       <button
         type="button"
         class="window-control"
         aria-label={isMaximized ? "Restore window" : "Maximize window"}
         onclick={toggleMaximizeWindow}
-      >{isMaximized ? "❐" : "□"}</button>
-      <button type="button" class="window-control close" aria-label="Close window" onclick={closeWindow}>×</button>
+      >
+        {#if isMaximized}
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M0.5 3.5h6v6h-6z" />
+            <path d="M3.5 3.5v-3h6v6h-3" />
+          </svg>
+        {:else}
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 0.5h9v9h-9z" /></svg>
+        {/if}
+      </button>
+      <button type="button" class="window-control close" aria-label="Close window" onclick={closeWindow}>
+        <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" /></svg>
+      </button>
     </div>
   {/if}
 </div>
@@ -210,13 +223,24 @@
   }
 
   .window-control {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 42px;
     border: none;
     background: transparent;
     color: var(--fg-dim);
     cursor: pointer;
-    font-size: 1rem;
     line-height: 1;
+  }
+
+  .window-control svg {
+    width: 10px;
+    height: 10px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1;
+    stroke-linecap: square;
   }
 
   .window-control:hover {
