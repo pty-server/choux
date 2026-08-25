@@ -1,5 +1,15 @@
 <script lang="ts">
   import SvelteDiff from "@humanspeak/svelte-diff";
+  import Highlight from "svelte-highlight";
+  import bash from "svelte-highlight/languages/bash";
+  import javascript from "svelte-highlight/languages/javascript";
+  import perl from "svelte-highlight/languages/perl";
+  import php from "svelte-highlight/languages/php";
+  import python from "svelte-highlight/languages/python";
+  import ruby from "svelte-highlight/languages/ruby";
+  import sql from "svelte-highlight/languages/sql";
+  import "svelte-highlight/styles/github-dark.css";
+  import { commandSegments, type CommandLanguage } from "./heredoc";
   import type { PendingQuestion, QuestionResponseResult } from "../../registry/types";
 
   interface Props {
@@ -7,6 +17,8 @@
     queued?: number;
     onRespond: (id: string, response: { answer: string; note?: string } | { cancelled: true; note?: string }) => QuestionResponseResult;
   }
+
+  const GRAMMARS: Partial<Record<CommandLanguage, typeof bash>> = { bash, python, javascript, ruby, perl, php, sql };
 
   let { question, queued = 0, onRespond }: Props = $props();
   let note = $state("");
@@ -92,7 +104,12 @@
                   {#if block.cwd}<span class="cwd">{block.cwd}</span>{/if}
                   {#each block.badges ?? [] as badge (badge)}<span class="badge">{badge}</span>{/each}
                 </header>
-                <pre>{block.command}</pre>
+                <div class="code">
+                  {#each commandSegments(block.command) as segment, position (position)}
+                    {@const grammar = GRAMMARS[segment.language]}
+                    {#if grammar}<Highlight language={grammar} code={segment.code} />{:else}<pre>{segment.code}</pre>{/if}
+                  {/each}
+                </div>
               {:else if block.kind === "diff"}
                 <header>
                   <span class="kind">{block.before.length === 0 ? "New content" : "Change"}</span>
@@ -160,7 +177,9 @@
   .kind { color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.06em; }
   .cwd { flex: 1 1 auto; min-width: 0; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .badge { flex: 0 0 auto; padding: 1px var(--sp-1); color: var(--status-offline); border: 1px solid currentColor; border-radius: 999px; }
-  .block pre { margin: 0; padding: var(--sp-2); font: inherit; font-size: 0.85rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .code { padding: var(--sp-2); }
+  .block :global(pre) { margin: 0; padding: 0; font: inherit; font-size: 0.85rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .block :global(pre code.hljs) { padding: 0; background: transparent; }
   .diff { padding: var(--sp-2); font-size: 0.85rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
   del, ins { text-decoration: none; border-radius: 2px; }
   del { color: var(--status-offline); background: color-mix(in srgb, var(--status-offline) 18%, transparent); }
@@ -171,6 +190,7 @@
   .options { flex: 0 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--sp-2); padding-right: var(--sp-1); overflow-y: auto; }
   .option { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: var(--sp-2) var(--sp-3); color: var(--fg); text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
   .option:hover, .option:focus-visible { border-color: var(--accent); }
+  .option:focus-visible, .cancel:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .preview { margin: var(--sp-1) 0 0; padding: var(--sp-2); color: var(--fg-dim); font: inherit; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 3px; }
   small, label span { color: var(--fg-dim); }
   label { display: flex; flex-direction: column; gap: var(--sp-1); color: var(--fg); font-size: 0.85rem; }
