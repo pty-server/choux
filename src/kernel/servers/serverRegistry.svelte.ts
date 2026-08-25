@@ -170,6 +170,7 @@ function isQuestionData(value: unknown): value is QuestionData {
       return false;
     }
     if (option.description !== undefined && typeof option.description !== "string") return false;
+    if (option.preview !== undefined && typeof option.preview !== "string") return false;
     if (optionIds.includes(option.id)) return false;
     optionIds.push(option.id);
     return true;

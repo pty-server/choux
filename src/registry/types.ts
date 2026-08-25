@@ -129,6 +129,8 @@ export interface QuestionOption {
   readonly id: string;
   readonly label: string;
   readonly description?: string;
+  /** Verbatim sample of what picking this option means - rendered as preformatted text. */
+  readonly preview?: string;
 }
 
 export interface QuestionOrigin {

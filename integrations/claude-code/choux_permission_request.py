@@ -264,6 +264,52 @@ def write_question(tool_input: dict[str, Any], description: str | None, suggesti
     )
 
 
+def ask_question(tool_input: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, str]] | None:
+    """Claude Code's own multiple-choice prompt. Only one single-answer question maps
+    onto a Choux question - anything else keeps the terminal dialog."""
+    questions = tool_input.get("questions")
+    if not isinstance(questions, list) or len(questions) != 1:
+        return None
+    asked = questions[0]
+    if not isinstance(asked, dict) or asked.get("multiSelect") is True:
+        return None
+    text = asked.get("question")
+    choices = asked.get("options")
+    if not isinstance(text, str) or not text.strip() or not isinstance(choices, list) or not choices:
+        return None
+
+    options: list[dict[str, Any]] = []
+    labels: dict[str, str] = {}
+    for index, choice in enumerate(choices):
+        label = choice.get("label") if isinstance(choice, dict) else None
+        if not isinstance(label, str) or not label.strip():
+            return None
+        label = label.strip()
+        option_id = f"choice-{index}"
+        description = choice.get("description")
+        choice_preview = choice.get("preview")
+        options.append({
+            "id": option_id,
+            "label": label,
+            **({"description": clipped(description.strip())} if isinstance(description, str) and description.strip() else {}),
+            **({"preview": preview(choice_preview)} if isinstance(choice_preview, str) and choice_preview.strip() else {}),
+        })
+        labels[option_id] = label
+
+    options.append({"id": "other", "label": "Other", "description": "A note becomes the answer"})
+    options.append(deny_option())
+    header = asked.get("header")
+    question = {
+        "type": "choux.question",
+        "data": {
+            "title": header.strip() if isinstance(header, str) and header.strip() else "Claude Code question",
+            "message": clipped(text.strip()),
+            "options": options,
+        },
+    }
+    return question, text, labels
+
+
 def generic_question(tool_name: object, description: str | None, details: object, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
     parts = [f"Claude Code requests permission to use {tool_name or 'a tool'}."]
     if description:
@@ -287,7 +333,7 @@ def generic_question(tool_name: object, description: str | None, details: object
     }
 
 
-def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]], tuple[str, dict[str, str]] | None]:
     tool_name = request.get("tool_name")
     tool_input = request.get("tool_input")
     raw_description = tool_input.get("description") if isinstance(tool_input, dict) else None
@@ -300,6 +346,13 @@ def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, lis
         else tool_input
     )
     command = details.get("command") if isinstance(details, dict) else None
+    if tool_name == "AskUserQuestion":
+        asked = ask_question(tool_input) if isinstance(tool_input, dict) else None
+        if asked is None:
+            normal_flow()
+        question, text, labels = asked
+        question["data"]["origin"] = origin_for(request)
+        return question, {}, (text, labels)
     if not isinstance(tool_input, dict):
         question = generic_question(tool_name, description, details, suggestions)
     elif tool_name == "Bash" and isinstance(command, str) and command.strip():
@@ -315,7 +368,22 @@ def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, lis
     else:
         question = generic_question(tool_name, description, details, suggestions)
     question["data"]["origin"] = origin_for(request)
-    return question, updates
+    return question, updates, None
+
+
+def ask_decision(tool_input: dict[str, Any], ask: tuple[str, dict[str, str]], answer: str, note: object) -> dict[str, Any] | None:
+    """Claude Code reads the picked answer back out of the tool input it re-runs with."""
+    text, labels = ask
+    written = note.strip() if isinstance(note, str) and note.strip() else None
+    if answer == "deny":
+        return {"behavior": "deny", **({"message": written} if written else {})}
+    chosen = labels.get(answer) or (written if answer == "other" else None)
+    if chosen is None:
+        return None
+    updated: dict[str, Any] = {**tool_input, "answers": {text: chosen}}
+    if written and answer != "other":
+        updated["annotations"] = {text: {"notes": written}}
+    return {"behavior": "allow", "updatedInput": updated}
 
 
 def claude_decision(decision: dict[str, Any]) -> None:
@@ -337,7 +405,7 @@ def main() -> None:
         normal_flow()
     if not isinstance(request, dict):
         normal_flow()
-    question, updates = question_for(request)
+    question, updates, ask = question_for(request)
     try:
         result = subprocess.run(
             ["ptys", "event", "--request", "--timeout", str(DEFAULT_TIMEOUT_SECONDS), json.dumps(question, ensure_ascii=False)],
@@ -356,6 +424,11 @@ def main() -> None:
         normal_flow()
     answer = response.get("answer")
     note = response.get("note")
+    if ask is not None and isinstance(answer, str):
+        decision = ask_decision(request["tool_input"], ask, answer, note)
+        if decision is None:
+            normal_flow()
+        claude_decision(decision)
     if answer == "allow":
         claude_decision(allow_decision(None))
     if isinstance(answer, str) and answer in updates:

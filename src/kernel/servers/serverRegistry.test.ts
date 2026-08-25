@@ -289,6 +289,42 @@ describe("server registry event stream", () => {
     expect(registry.pendingQuestions.map((pending) => pending.notes)).toEqual([false]);
   });
 
+  it("keeps option previews and rejects a question whose preview is not text", async () => {
+    const sockets: MockEventSocket[] = [];
+    const registry = createServerRegistry({
+      createClient: () => clientWith({ sessions: [{ id: "session-1", name: "Agent" }] }),
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 1000,
+    });
+    await registry.addServer({ url: "http://one.test", token: "one", label: "Local" });
+    await settle();
+    const socket = sockets[0];
+    if (!socket) throw new Error("Expected an event socket");
+    socket.readyState = 1;
+
+    const question = (requestId: string, preview: unknown): string => JSON.stringify({
+      t: "event",
+      requestId,
+      ttl: 0,
+      event: {
+        sessionId: "session-1",
+        type: "choux.question",
+        data: { message: "Which fix?", options: [{ id: "choice-0", label: "Server side", preview }] },
+      },
+    });
+
+    socket.onmessage?.({ data: question("request-1", "boot();\nrun();") });
+    socket.onmessage?.({ data: question("request-2", 7) });
+
+    expect(registry.pendingQuestions.map((pending) => pending.options)).toEqual([
+      [{ id: "choice-0", label: "Server side", preview: "boot();\nrun();" }],
+    ]);
+  });
+
   it("keeps command blocks and drops the ones it cannot draw", async () => {
     const sockets: MockEventSocket[] = [];
     const registry = createServerRegistry({

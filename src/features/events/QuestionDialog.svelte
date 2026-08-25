@@ -124,6 +124,7 @@
           <button type="button" class="option" onclick={() => respond({ answer: option.id })}>
             <span>{option.label}</span>
             {#if option.description}<small>{option.description}</small>{/if}
+            {#if option.preview}<pre class="preview">{option.preview}</pre>{/if}
           </button>
         {/each}
       </div>
@@ -152,7 +153,7 @@
   .queued { flex: 0 0 auto; padding: 1px var(--sp-2); border: 1px solid var(--border); border-radius: 999px; }
   h2, p { margin: 0; }
   h2 { font-size: 1rem; }
-  .message { flex: 0 1 auto; min-height: 0; padding-right: var(--sp-1); white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; line-height: 1.45; }
+  .message { flex: 0 0 auto; max-height: 30dvh; padding-right: var(--sp-1); white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; line-height: 1.45; }
   .blocks { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
   .block { display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
   .block header { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); background: var(--bg-elevated); border-bottom: 1px solid var(--border); font-size: 0.7rem; }
@@ -167,9 +168,10 @@
   dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; padding: var(--sp-2); font-size: 0.85rem; }
   dt { color: var(--fg-dim); }
   dd { margin: 0; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .options { display: grid; gap: var(--sp-2); }
-  .option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--sp-2) var(--sp-3); color: var(--fg); text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  .options { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--sp-2); padding-right: var(--sp-1); overflow-y: auto; }
+  .option { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: var(--sp-2) var(--sp-3); color: var(--fg); text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
   .option:hover, .option:focus-visible { border-color: var(--accent); }
+  .preview { margin: var(--sp-1) 0 0; padding: var(--sp-2); color: var(--fg-dim); font: inherit; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 3px; }
   small, label span { color: var(--fg-dim); }
   label { display: flex; flex-direction: column; gap: var(--sp-1); color: var(--fg); font-size: 0.85rem; }
   textarea { resize: vertical; padding: var(--sp-2); color: var(--fg); font: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
