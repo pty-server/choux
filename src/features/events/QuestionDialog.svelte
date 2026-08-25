@@ -168,7 +168,7 @@
   dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; padding: var(--sp-2); font-size: 0.85rem; }
   dt { color: var(--fg-dim); }
   dd { margin: 0; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .options { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--sp-2); padding-right: var(--sp-1); overflow-y: auto; }
+  .options { flex: 0 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--sp-2); padding-right: var(--sp-1); overflow-y: auto; }
   .option { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: var(--sp-2) var(--sp-3); color: var(--fg); text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
   .option:hover, .option:focus-visible { border-color: var(--accent); }
   .preview { margin: var(--sp-1) 0 0; padding: var(--sp-2); color: var(--fg-dim); font: inherit; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 3px; }

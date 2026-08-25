@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from typing import Any
@@ -264,6 +265,52 @@ def write_question(tool_input: dict[str, Any], description: str | None, suggesti
     )
 
 
+def humanized(key: str) -> str:
+    spaced = re.sub(r"(?<=[a-z0-9])([A-Z])", r" \1", key.replace("_", " ")).strip()
+    return spaced[0].upper() + spaced[1:].lower() if spaced else key
+
+
+def mcp_question(tool_name: str, tool_input: dict[str, Any], description: str | None, cwd: object, suggestions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """An MCP tool has no shape this hook can know, so its arguments are listed as
+    they arrive - with a `command` argument hoisted into a command block."""
+    parts = tool_name.split("__", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        return None
+    server, tool = parts[1], parts[2]
+
+    blocks: list[dict[str, Any]] = []
+    command = tool_input.get("command")
+    if isinstance(command, str) and command.strip():
+        working = tool_input.get("cwd") if isinstance(tool_input.get("cwd"), str) else cwd
+        blocks.append({
+            "kind": "command",
+            "command": clipped(command.strip()),
+            **({"cwd": working} if isinstance(working, str) and working else {}),
+        })
+
+    hoisted = {"command", "cwd", "description"} if blocks else {"description"}
+    fields = []
+    for key, value in tool_input.items():
+        if key in hoisted:
+            continue
+        text = value if isinstance(value, str) else as_text(value)
+        if not text.strip():
+            continue
+        fields.append({"label": humanized(key), "value": clipped(text.strip())})
+    if fields:
+        blocks.append({"kind": "fields", "title": "Arguments", "fields": fields})
+
+    return {
+        "type": "choux.question",
+        "data": {
+            "title": "Run an MCP tool",
+            "message": description or f"Claude Code wants to run {tool} on the {server} MCP server.",
+            "options": [allow_option(), *suggestions, deny_option()],
+            **({"blocks": blocks} if blocks else {}),
+        },
+    }
+
+
 def ask_question(tool_input: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, str]] | None:
     """Claude Code's own multiple-choice prompt. Only one single-answer question maps
     onto a Choux question - anything else keeps the terminal dialog."""
@@ -366,7 +413,8 @@ def question_for(request: dict[str, Any]) -> tuple[dict[str, Any], dict[str, lis
     elif tool_name == "WebFetch" and isinstance(tool_input.get("url"), str):
         question = fetch_question(tool_input, suggestions)
     else:
-        question = generic_question(tool_name, description, details, suggestions)
+        served = mcp_question(tool_name, tool_input, description, request.get("cwd"), suggestions) if isinstance(tool_name, str) and tool_name.startswith("mcp__") else None
+        question = served if served is not None else generic_question(tool_name, description, details, suggestions)
     question["data"]["origin"] = origin_for(request)
     return question, updates, None
 
