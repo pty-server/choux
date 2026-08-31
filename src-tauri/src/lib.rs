@@ -874,6 +874,7 @@ fn hide_to_tray(window: &Window, event: &WindowEvent) {
             api.prevent_close();
             let _ = window.hide();
         }
+        #[cfg(not(target_os = "linux"))]
         WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => {
             let _ = window.unminimize();
             let _ = window.hide();
