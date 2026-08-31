@@ -526,6 +526,8 @@ version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
+ "gdkx11",
+ "gtk",
  "keyring",
  "serde",
  "serde_json",

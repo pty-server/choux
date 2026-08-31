@@ -818,10 +818,37 @@ fn token_delete(token_ref: String) -> Result<(), String> {
 
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
         let _ = window.unminimize();
+        let _ = window.show();
         let _ = window.set_focus();
     }
+    #[cfg(target_os = "linux")]
+    present_main_window(app);
+}
+
+#[cfg(target_os = "linux")]
+fn present_main_window(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        use gtk::prelude::{Cast, GtkWindowExt, WidgetExt};
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        let Ok(gtk_window) = window.gtk_window() else {
+            return;
+        };
+        gtk_window.deiconify();
+        let timestamp = gtk_window
+            .window()
+            .and_then(|gdk_window| gdk_window.downcast::<gdkx11::X11Window>().ok())
+            .map(|x11_window| {
+                let now = gdkx11::functions::x11_get_server_time(&x11_window);
+                x11_window.set_user_time(now);
+                now
+            })
+            .unwrap_or(0);
+        gtk_window.present_with_time(timestamp);
+    });
 }
 
 #[cfg(desktop)]
