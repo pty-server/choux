@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from "vitest";
 import { createKernelRegistry } from "./registry.svelte";
 import { dispatchReservedKeydown, isMacPlatform, type ReservedKeyEvent } from "./keydispatch";
 import { keybindingsByAccelerator, resolveKeybindings } from "../../registry/keybindings";
+import { beginKeyCapture } from "../../registry/keyCapture";
 
 function makeMockEvent(
   overrides: Partial<Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">> = {},
@@ -104,6 +105,22 @@ describe("dispatchReservedKeydown", () => {
       expect(dispatchReservedKeydown(event, registry, keybindings)).toBe(true);
       expect(run).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("stands down while a settings field is recording a chord", () => {
+    const run = vi.fn();
+    const registry = registryWith("test.cmd", run);
+    const event = makeMockEvent({ code: "KeyK", ctrlKey: true, shiftKey: true });
+    const release = beginKeyCapture();
+
+    expect(dispatchReservedKeydown(event, registry, { "Control+Shift+KeyK": "test.cmd" })).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+
+    release();
+
+    expect(dispatchReservedKeydown(event, registry, { "Control+Shift+KeyK": "test.cmd" })).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it("leaves plain Ctrl+K to readline's kill-line by default", () => {

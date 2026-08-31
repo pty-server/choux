@@ -1,6 +1,7 @@
 // Intercepts the configured chords so a command runs before xterm.js sees the
 // event; every other key passes through to the pty untouched.
 import { acceleratorFromKeyboardEvent } from "../../registry/accelerator";
+import { keyCaptureActive } from "../../registry/keyCapture";
 import type { KernelRegistry } from "../../registry/types";
 
 export function isMacPlatform(
@@ -26,6 +27,10 @@ export function dispatchReservedKeydown(
   registry: KernelRegistry,
   keybindings: Readonly<Record<string, string>>,
 ): boolean {
+  if (keyCaptureActive()) {
+    return false;
+  }
+
   const accelerator = acceleratorFromKeyboardEvent(event);
 
   if (accelerator === undefined) {

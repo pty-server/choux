@@ -8,6 +8,7 @@
   } from "../../registry/terminalTheme";
 
   import { acceleratorFromKeyboardEvent, describeAccelerator } from "../../registry/accelerator";
+  import { beginKeyCapture } from "../../registry/keyCapture";
   import type { GlobalShortcutSettings } from "../../registry/globalShortcut";
   import { eventSettingsEqual, type EventSettings } from "../../registry/eventSettings";
   import {
@@ -34,6 +35,8 @@
     globalShortcut: GlobalShortcutSettings;
     globalShortcutSupported: boolean;
     onSaveGlobalShortcut: (settings: GlobalShortcutSettings) => Promise<string | undefined>;
+    /** Releases the registered chord so the field can record the one already in use. */
+    onSuspendGlobalShortcut: (suspended: boolean) => Promise<void>;
     eventSettings: EventSettings;
     onSaveEventSettings: (settings: EventSettings) => Promise<void>;
     keybindingOverrides: KeybindingOverrides;
@@ -52,6 +55,7 @@
     globalShortcut,
     globalShortcutSupported,
     onSaveGlobalShortcut,
+    onSuspendGlobalShortcut,
     eventSettings,
     onSaveEventSettings,
     keybindingOverrides,
@@ -68,15 +72,43 @@
   let capturing = $state(false);
   let shortcutSaving = $state(false);
   let shortcutError = $state("");
+  let shortcutNotice = $state("");
+  let shortcutConfirmed = $state(false);
+  let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function setCapturing(next: boolean) {
+    if (capturing === next) return;
+    capturing = next;
+    if (next) {
+      shortcutNotice = "";
+      shortcutConfirmed = false;
+    }
+    void onSuspendGlobalShortcut(next);
+  }
+
+  function confirmCapture(accelerator: string) {
+    shortcutNotice = accelerator === globalShortcut.accelerator
+      ? `${describeAccelerator(accelerator)} is already the current shortcut.`
+      : "";
+    shortcutConfirmed = true;
+    clearTimeout(confirmTimer);
+    confirmTimer = setTimeout(() => (shortcutConfirmed = false), 700);
+  }
 
   function captureShortcut(event: KeyboardEvent) {
-    if (event.key === "Escape") { capturing = false; return; }
+    if (event.key === "Escape") { setCapturing(false); return; }
     event.preventDefault();
     const accelerator = acceleratorFromKeyboardEvent(event);
     if (!accelerator) return;
     shortcutDraft = { ...shortcutDraft, accelerator };
-    capturing = false;
+    setCapturing(false);
+    confirmCapture(accelerator);
   }
+
+  $effect(() => () => {
+    clearTimeout(confirmTimer);
+    if (capturing) void onSuspendGlobalShortcut(false);
+  });
 
   function isShortcutDirty() {
     return shortcutDraft.enabled !== globalShortcut.enabled
@@ -107,6 +139,11 @@
 
   let bindingDraft = $derived<KeybindingOverrides>({ ...keybindingOverrides });
   let capturingCommandId = $state<string | undefined>(undefined);
+
+  $effect(() => {
+    if (!capturing && capturingCommandId === undefined) return;
+    return beginKeyCapture();
+  });
   let bindingsSaving = $state(false);
 
   let resolvedBindings = $derived(resolveKeybindings(bindingDraft, isMac));
@@ -252,7 +289,7 @@
           <input type="checkbox" checked={shortcutDraft.enabled} onchange={(event) => (shortcutDraft = { ...shortcutDraft, enabled: event.currentTarget.checked })} />
           <span>Enabled</span>
         </label>
-        <button type="button" class="capture" class:capturing onclick={() => (capturing = !capturing)} onkeydown={captureShortcut}>
+        <button type="button" class="capture" class:capturing class:confirmed={shortcutConfirmed} onclick={() => setCapturing(!capturing)} onkeydown={captureShortcut}>
           {capturing ? "Press a combination…" : describeAccelerator(shortcutDraft.accelerator)}
         </button>
         <button type="button" class="save" disabled={!isShortcutDirty() || shortcutSaving} onclick={() => void saveShortcut()}>{shortcutSaving ? "Saving…" : "Save shortcut"}</button>
@@ -260,6 +297,8 @@
 
       {#if shortcutError}
         <p class="shortcut-error" role="alert">{shortcutError}</p>
+      {:else if shortcutNotice}
+        <p class="shortcut-notice" role="status">{shortcutNotice}</p>
       {:else}
         <p>Needs a modifier other than Shift. Escape cancels capture.</p>
       {/if}
@@ -508,7 +547,9 @@
   .toggle input { grid-row: auto; width: auto; height: auto; }
   .capture { flex: 1 1 12rem; min-width: 0; font-family: var(--font-terminal); }
   .capture.capturing { border-color: var(--accent); color: var(--accent); }
+  .capture.confirmed { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
   .shortcut-error { margin-top: var(--sp-2); color: #ff7b72; font-size: 0.85rem; }
+  .shortcut-notice { margin-top: var(--sp-2); color: var(--accent); font-size: 0.85rem; }
   .bindings { display: flex; flex-direction: column; gap: var(--sp-1); margin: var(--sp-3) 0 0; padding: 0; list-style: none; }
   .bindings li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.85rem; }
   .bindings li > span { flex: 1 1 10rem; min-width: 0; }

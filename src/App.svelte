@@ -459,6 +459,10 @@
     terminalSettings = { ...settings, theme: { ...settings.theme } };
   }
 
+  async function handleSuspendGlobalShortcut(suspended: boolean): Promise<void> {
+    await applyGlobalShortcut(suspended ? { ...globalShortcut, enabled: false } : globalShortcut);
+  }
+
   async function handleSaveGlobalShortcut(settings: GlobalShortcutSettings): Promise<string | undefined> {
     const failure = await applyGlobalShortcut(settings);
     if (failure) return failure;
@@ -525,6 +529,7 @@
           {globalShortcut}
           globalShortcutSupported={globalShortcutSupported()}
           onSaveGlobalShortcut={handleSaveGlobalShortcut}
+          onSuspendGlobalShortcut={handleSuspendGlobalShortcut}
           {eventSettings}
           onSaveEventSettings={handleSaveEventSettings}
           {keybindingOverrides}
