@@ -27,6 +27,7 @@
     type SessionProfileDraft,
     type SessionProfiles,
   } from "../../registry/sessionProfiles";
+  import IntegrationsCard from "./IntegrationsCard.svelte";
 
   interface Props {
     settings: TerminalSettings;
@@ -46,6 +47,10 @@
     onSaveSessionProfiles: (profiles: SessionProfiles) => Promise<void>;
     /** Injected because id generation lives in the kernel, which features cannot import. */
     newProfileId: () => string;
+    /** Injected because clipboard access lives in the kernel, which features cannot import. */
+    copyText: (text: string) => Promise<void>;
+    /** Injected because opening a link in the host browser lives in the kernel. */
+    openUrl: (url: string) => void;
   }
 
   let {
@@ -64,6 +69,8 @@
     sessionProfiles,
     onSaveSessionProfiles,
     newProfileId,
+    copyText,
+    openUrl,
   }: Props = $props();
   let draft = $derived<TerminalSettings>({ ...settings, theme: { ...settings.theme } });
   let saving = $state(false);
@@ -513,6 +520,8 @@
       <button type="button" class="save" disabled={!isDirty() || saving} onclick={() => void save()}>{saving ? "Saving…" : "Save settings"}</button>
     </div>
   </section>
+
+  <IntegrationsCard {copyText} {openUrl} />
 </section>
 
 <style>

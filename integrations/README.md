@@ -5,9 +5,10 @@ These integrations forward agent permission requests to Choux through a Ptys
 unavailable, the dialog is cancelled, or an integration fails, the agent falls
 back to its own normal permission prompt.
 
-Claude Code, Codex, and OpenCode each have a second, optional integration that
-reports what the agent is doing as a `choux.agent.state` event, so Choux can show
-a live status next to the right session - and, in tmux, next to the right window.
+Each agent also reports what it is doing as a `choux.agent.state` event, so Choux
+can show a live status next to the right session - and, in tmux, next to the right
+window. Claude Code's plugin carries both halves; for Codex and OpenCode the
+reporter is a second, optional install.
 
 ## Requirements
 
@@ -113,16 +114,32 @@ Choux attribute status to a single window instead of the whole session.
 
 ## Claude Code
 
-Copy the script and merge `claude-code/settings.json` into the `hooks` object
-in `~/.claude/settings.json`:
+Install the plugin from this repository's marketplace:
 
 ```bash
-mkdir -p ~/.claude/hooks
-cp integrations/claude-code/choux_permission_request.py ~/.claude/hooks/
+claude plugin marketplace add pty-server/choux
+claude plugin install choux@pty-server
 ```
 
-Start a new Claude Code session. Its `PermissionRequest` hook runs only when
-Claude Code is about to display a native permission dialog.
+That wires the permission bridge and the agent status reporter together, without
+touching the `hooks` object in `~/.claude/settings.json`. Start a new Claude Code
+session afterwards. There is no version to bump and no script to recopy: the
+marketplace tracks this repository, so an updated hook arrives on its own.
+`claude plugin list` shows what is installed, and `claude plugin uninstall
+choux@pty-server` removes it.
+
+Upgrading from the manual install means removing it. The old copy and the plugin
+both fire otherwise, and one permission request opens two Choux dialogs:
+
+```bash
+rm -f ~/.claude/hooks/choux_permission_request.py ~/.claude/hooks/choux_agent_state.py
+```
+
+Then delete the `choux_*` entries from the `hooks` object in
+`~/.claude/settings.json`.
+
+The `PermissionRequest` hook runs only when Claude Code is about to display a
+native permission dialog.
 
 A `Bash` request is sent as a `command` block, so Choux shows the command in a
 monospace panel with its working directory and a badge when the sandbox is off.
@@ -152,26 +169,15 @@ The question therefore carries `origin.agentSessionId` and `origin.toolUseId`,
 and the state reporter sends both. When Claude Code reports that same tool call
 finished, or that the run ended, Choux answers the question as cancelled and the
 hook exits at once. Matching the tool call rather than the run keeps questions
-from a parallel tool batch queued - each stays until it is answered. Install both
-integrations to get that; the permission hook alone still works, but a request
-approved in the IDE leaves its Choux dialog up until the timeout.
+from a parallel tool batch queued - each stays until it is answered. The plugin
+installs the reporter alongside the bridge, which is what makes that work.
 
 ### Agent status
 
-To also show Claude Code's activity in Choux's session list, install the state
-reporter and merge `claude-code/agent-state.settings.json` the same way:
-
-```bash
-cp integrations/claude-code/choux_agent_state.py ~/.claude/hooks/
-```
-
-It is wired to every Claude Code hook event, so it runs on every tool call. It
+`choux_agent_state.py` is wired to every Claude Code hook event, so it runs on
+every tool call and Choux can show a live status next to the right session. It
 posts directly to the Ptys control socket - no `ptys` process per event - and
 always exits 0 without writing to stdout, so it cannot disturb the agent.
-
-Both files carry a `PermissionRequest` entry. When merging them into
-`~/.claude/settings.json`, keep both commands in that event's `hooks` array
-rather than letting one replace the other.
 
 Inside tmux the reporter tags each event with `$TMUX_PANE`, which is what lets
 Choux attribute status to a single window instead of the whole session. Panes
@@ -237,7 +243,9 @@ request approved in OpenCode leaves its Choux dialog up until the timeout.
 
 - `codex/` — Codex `PermissionRequest` hook, the `choux.agent.state` reporter,
   their hook configuration, and the tests covering both scripts.
-- `claude-code/` — Claude Code `PermissionRequest` hook and settings entry,
-  plus the optional `choux.agent.state` reporter and its settings entry.
+- `claude-code/` — the Claude Code plugin: its manifest, the hook configuration
+  wiring both scripts, and the `PermissionRequest` bridge and `choux.agent.state`
+  reporter themselves under `scripts/`. Published through
+  `.claude-plugin/marketplace.json` at the repository root.
 - `opencode/` — OpenCode `permission.asked` plugin and permission settings,
   plus the optional `choux.agent.state` reporter plugin.

@@ -10,9 +10,9 @@
   import type { AttachExitInfo } from "../transport/attach";
   import { untrack } from "svelte";
   import type { TerminalTheme } from "../../registry/terminalTheme";
-  import { isTauriRuntime } from "../storage/tokenStore";
   import { localPtysSocket } from "../transport/localPtys";
   import { readClipboardText, writeClipboardText } from "../platform/clipboard";
+  import { openExternalUrl } from "../platform/openUrl";
   import {
     clearActiveTerminalClipboard,
     decodeOsc52,
@@ -63,25 +63,6 @@
     exitInfo ? "exited" : cols === 0 ? "attaching" : status,
   );
 
-  function openTerminalUrl(uri: string): void {
-    let url: URL;
-    try {
-      url = new URL(uri);
-    } catch {
-      return;
-    }
-    if (url.protocol !== "http:" && url.protocol !== "https:") return;
-
-    if (isTauriRuntime()) {
-      void import("@tauri-apps/plugin-opener")
-        .then(({ openUrl }) => openUrl(url))
-        // Failing to open a link must not interrupt the terminal session.
-        .catch(() => {});
-      return;
-    }
-
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
 
   const nativePasteWindowMs = 300;
   let lastNativePasteAt = 0;
@@ -239,7 +220,7 @@
     // Render image protocols without changing the terminal's window-size
     // report behavior; TUI applications already manage those queries.
     term.loadAddon(new ImageAddon({ enableSizeReports: false }));
-    term.loadAddon(new WebLinksAddon((_event, uri) => openTerminalUrl(uri)));
+    term.loadAddon(new WebLinksAddon((_event, uri) => openExternalUrl(uri)));
     term.unicode.activeVersion = "11";
 
     // OSC 52 is what makes copying work without a mouse: tmux `set-clipboard on`

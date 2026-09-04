@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "pty-server",
+  "description": "Agent integrations for Choux, the native desktop client for the ptys session server.",
+  "owner": {
+    "name": "Karol Nowacki",
+    "url": "https://github.com/pty-server/choux"
+  },
+  "plugins": [
+    {
+      "name": "choux",
+      "source": "./integrations/claude-code",
+      "description": "Answer Claude Code permission requests in Choux, and show live agent status in its session list.",
+      "category": "productivity"
+    }
+  ]
+}

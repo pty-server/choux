@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "UserPromptSubmit": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_permission_request.py\"",
+            "timeout": 65,
+            "statusMessage": "Waiting for Choux approval"
+          }
+        ]
+      }
+    ],
+    "Notification": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "Stop": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "SubagentStop": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "PreCompact": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }],
+    "SessionEnd": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choux_agent_state.py\"", "timeout": 5 }] }]
+  }
+}

@@ -9,6 +9,8 @@
   import { protocolMismatch } from "../transport/protocolVersion";
   import { buildRailModel } from "./railModel";
   import { activeTerminalClipboard } from "./terminalClipboard";
+  import { writeClipboardText } from "../platform/clipboard";
+  import { openExternalUrl } from "../platform/openUrl";
   import { accentPalette } from "../storage/serverConfigStore";
   import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
   import { getSessionOrder, orderSessions, reorderSessionIds, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
@@ -196,7 +198,13 @@
     agentState: selectedServerId ? serverRegistry.get(selectedServerId)?.agentStates[agentStateKey(session.id, undefined)] : undefined,
   })}
   {#if view && selectedServerId}
-    <view.component {session} serverId={selectedServerId} onFocusSession={() => onSelectSession(session)} />
+    <view.component
+      {session}
+      serverId={selectedServerId}
+      onFocusSession={() => onSelectSession(session)}
+      copyText={writeClipboardText}
+      openUrl={openExternalUrl}
+    />
   {/if}
 {/snippet}
 

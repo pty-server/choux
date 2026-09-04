@@ -37,7 +37,15 @@ export interface SessionViewItem {
   order?: number;
   /** Must stay pure and synchronous - it runs for every visible session on every poll. */
   detect: (context: SessionViewContext) => boolean;
-  component: Component<{ session: Session; serverId: string; onFocusSession: () => void }>;
+  component: Component<{
+    session: Session;
+    serverId: string;
+    onFocusSession: () => void;
+    /** Injected because clipboard access lives in the kernel, which features cannot import. */
+    copyText: (text: string) => Promise<void>;
+    /** Injected because opening a link in the host browser lives in the kernel. */
+    openUrl: (url: string) => void;
+  }>;
 }
 
 export interface KernelRegistry {

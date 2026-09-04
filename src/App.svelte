@@ -13,6 +13,8 @@
   import { initializeTokenStore } from "./kernel/storage/tokenStore";
   import { getLocalServerBridge, localServerEndpoint, type LocalServerTool } from "./kernel/platform/localServer";
   import { listenForSessionDeepLinks, type SessionDeepLink } from "./kernel/platform/deepLink";
+  import { writeClipboardText } from "./kernel/platform/clipboard";
+  import { openExternalUrl } from "./kernel/platform/openUrl";
   import { provideServerRegistry } from "./registry/context";
   import LocalServerDialog from "./features/servers/LocalServerDialog.svelte";
   import SettingsPage from "./features/settings/SettingsPage.svelte";
@@ -538,6 +540,8 @@
           {sessionProfiles}
           onSaveSessionProfiles={handleSaveSessionProfiles}
           newProfileId={randomId}
+          copyText={writeClipboardText}
+          openUrl={openExternalUrl}
         />
       {:else}
         <div class="attach-container" bind:this={mainContainer}>
