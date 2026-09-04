@@ -292,6 +292,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
 
     let client: ReturnType<typeof createApiClient> | undefined;
     let inFlight = false;
+    let pollQueued = false;
     let stopped = false;
     let interval: ReturnType<typeof setInterval> | undefined;
     let eventStream: EventStreamController | undefined;
@@ -413,7 +414,11 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     };
 
     const poll = async (): Promise<void> => {
-      if (stopped || !client || inFlight) return;
+      if (stopped || !client) return;
+      if (inFlight) {
+        pollQueued = true;
+        return;
+      }
       inFlight = true;
       const swept = sweepAgentStates(conn.agentStates, Date.now());
       if (swept !== undefined) conn.agentStates = swept;
@@ -444,6 +449,10 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         conn.connectionError = describeConnectionFailure(err);
       } finally {
         inFlight = false;
+        if (pollQueued && !stopped) {
+          pollQueued = false;
+          void poll();
+        }
       }
     };
 

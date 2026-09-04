@@ -160,6 +160,33 @@ describe("server registry polling", () => {
     resolveInfo?.({ protocol: PROTOCOL_VERSION });
     await settle();
   });
+
+  it("serves a refresh that arrives while a poll is in flight", async () => {
+    let resolveInfo: ((value: { protocol: number }) => void) | undefined;
+    const getInfo = vi.fn(() => new Promise<{ protocol: number }>((resolve) => {
+      resolveInfo = resolve;
+    }));
+    const client = clientWith({ getInfo });
+    const registry = createServerRegistry({ createClient: () => client, pollIntervalMs: 1000 });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+
+    registry.refresh(conn.config.id);
+    await settle();
+    expect(client.getSessions).toHaveBeenCalledTimes(1);
+
+    client.getSessions.mockResolvedValueOnce([{ id: "created" }]);
+    client.getWorkspaces.mockResolvedValueOnce([{ id: "created-workspace" }]);
+    const pending = resolveInfo;
+    pending?.({ protocol: PROTOCOL_VERSION });
+    await settle();
+    resolveInfo?.({ protocol: PROTOCOL_VERSION });
+    await settle();
+
+    expect(client.getSessions).toHaveBeenCalledTimes(2);
+    expect(registry.get(conn.config.id)?.sessions).toEqual([{ id: "created" }]);
+    expect(registry.get(conn.config.id)?.workspaces).toEqual([{ id: "created-workspace" }]);
+  });
 });
 
 describe("server registry event stream", () => {

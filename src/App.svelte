@@ -174,9 +174,9 @@
   });
 
   $effect(() => {
-    if (conn?.status !== "online") return;
+    if (conn?.status !== "online" || workspaces.length === 0) return;
     if (selectedWorkspaceId !== undefined && workspaces.some((workspace) => workspace.id === selectedWorkspaceId)) return;
-    selectedWorkspaceId = workspaces[0]?.id;
+    selectedWorkspaceId = workspaces[0].id;
   });
 
   $effect(() => {
@@ -237,11 +237,15 @@
     });
   }
 
-  function handleStartDefaultSession(serverId = selectedServerId, workspaceId = selectedWorkspaceId) {
-    if (!serverId) return;
+  function startDefaultSession(serverId: string, workspaceId: string | undefined) {
     // No default profile means no cmd at all, so the server picks its default shell.
     const profile = resolveDefaultProfile(sessionProfiles);
     handleCreate({ workspaceId, serverId, ...(profile ? profileLaunchInput(profile) : {}) });
+  }
+
+  function handleStartDefaultSession() {
+    if (!selectedServerId) return;
+    startDefaultSession(selectedServerId, selectedWorkspaceId);
   }
 
   function handleLaunchProfile(profileId: string) {
@@ -446,7 +450,7 @@
           return config?.transport === "local" && config.instance !== undefined && !knownInstances.has(config.instance);
         });
         if (startedServerId) {
-          handleStartDefaultSession(startedServerId, undefined);
+          startDefaultSession(startedServerId, undefined);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
