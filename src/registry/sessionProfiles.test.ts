@@ -49,9 +49,23 @@ describe("parseArgsString", () => {
   });
 
   it("round-trips through formatArgs", () => {
-    for (const args of [["-i", "--login"], ["--prompt", "be brief"], ["-c", ""], ["it's", "fine"]]) {
+    for (const args of [
+      ["-i", "--login"],
+      ["--prompt", "be brief"],
+      ["-c", ""],
+      ["it's", "fine"],
+      ["-e", 'console.log("it\'s ok")'],
+      ["--sql", `name = 'a b' AND note = "x"`],
+      ["'"],
+      ["'leading", "trailing'"],
+      ["--path", "C:\\Program Files\\ptys"],
+    ]) {
       expect(parseArgsString(formatArgs(args))).toEqual(args);
     }
+  });
+
+  it("concatenates adjacent quoted runs into one argument", () => {
+    expect(parseArgsString(`'it'"'"'s'`)).toEqual(["it's"]);
   });
 });
 

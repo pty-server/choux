@@ -63,13 +63,19 @@ export function parseArgsString(value: string): string[] {
 }
 
 export function formatArgs(args: readonly string[]): string {
-  return args
-    .map((arg) => {
-      if (arg !== "" && !/\s|["']/.test(arg)) return arg;
-      // No escapes in the grammar, so pick the quote the value does not contain.
-      return arg.includes("'") ? `"${arg}"` : `'${arg}'`;
-    })
-    .join(" ");
+  return args.map(quoteArg).join(" ");
+}
+
+const singleQuoteLiteral = `"'"`;
+
+/** The grammar has no escapes, so a value carrying both quote styles becomes adjacent quoted runs. */
+function quoteArg(arg: string): string {
+  if (arg === "") return "''";
+  if (!/\s|["']/.test(arg)) return arg;
+  return arg
+    .split("'")
+    .map((run) => (run === "" ? "" : `'${run}'`))
+    .join(singleQuoteLiteral);
 }
 
 /** One `KEY=VALUE` per line. Blank and `#` lines are skipped; unparsable lines are dropped. */
