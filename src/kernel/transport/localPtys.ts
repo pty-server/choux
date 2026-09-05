@@ -94,9 +94,18 @@ export class LocalPtysSocket implements AttachSocket, EventSocket {
     try {
       const { listen } = await import("@tauri-apps/api/event");
       const channel = eventId();
-      this.unlisten = await listen<LocalSocketEvent>(channel, (event) => this.handle(event.payload));
-      if (this.closed) return;
-      this.connectionId = await invoke<string>("local_socket_open", { instance, path, protocols, channel });
+      const unlisten = await listen<LocalSocketEvent>(channel, (event) => this.handle(event.payload));
+      if (this.closed) {
+        unlisten();
+        return;
+      }
+      this.unlisten = unlisten;
+      const connectionId = await invoke<string>("local_socket_open", { instance, path, protocols, channel });
+      if (this.closed) {
+        void invoke("local_socket_close", { connectionId });
+        return;
+      }
+      this.connectionId = connectionId;
     } catch (error) {
       this.fail(error);
     }
