@@ -24,7 +24,7 @@
         <p>Install the ptys command from npm, then start a local daemon.</p>
       {:else}
         <p>Install <code>ptys</code> and make it available on PATH, then retry.</p>
-        <code>npm install --global ptys@latest</code>
+        <code>npm install --global @pty-server/ptys@latest</code>
       {/if}
       {#if message}<p class="message" role="alert">{message}</p>{/if}
       <div class="actions">

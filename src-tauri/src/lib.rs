@@ -576,7 +576,7 @@ fn local_server_tool() -> LocalServerTool {
 #[tauri::command(async)]
 fn local_server_install() -> LocalServerCommandResult {
     let output = match user_command("npm")
-        .args(["install", "--global", "ptys@latest"])
+        .args(["install", "--global", "@pty-server/ptys@latest"])
         .output()
     {
         Ok(output) => output,
