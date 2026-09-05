@@ -14,6 +14,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Mutex,
     },
+    time::Duration,
 };
 
 #[cfg(unix)]
@@ -44,6 +45,8 @@ mod locale;
 use locale::user_locale;
 
 const TOKEN_SERVICE: &str = "ptys-choux";
+#[cfg(unix)]
+const LOCAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SHOW_MENU_ID: &str = "show";
 const QUIT_MENU_ID: &str = "quit";
 
@@ -346,6 +349,10 @@ fn unix_http_request(
     }
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|error| format!("could not connect to local ptys: {error}"))?;
+    stream
+        .set_read_timeout(Some(LOCAL_REQUEST_TIMEOUT))
+        .and_then(|_| stream.set_write_timeout(Some(LOCAL_REQUEST_TIMEOUT)))
+        .map_err(|error| format!("could not configure the local ptys socket: {error}"))?;
     let payload = body.unwrap_or("");
     let mut request =
         format!("{method} {path} HTTP/1.1\r\nHost: ptys.local\r\nConnection: close\r\n");
@@ -371,9 +378,19 @@ fn unix_http_request(
         .and_then(|_| stream.write_all(payload.as_bytes()))
         .map_err(|error| format!("could not write to local ptys: {error}"))?;
     let mut raw = Vec::new();
-    stream
-        .read_to_end(&mut raw)
-        .map_err(|error| format!("could not read from local ptys: {error}"))?;
+    stream.read_to_end(&mut raw).map_err(|error| {
+        if matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            format!(
+                "local ptys did not respond within {}s",
+                LOCAL_REQUEST_TIMEOUT.as_secs()
+            )
+        } else {
+            format!("could not read from local ptys: {error}")
+        }
+    })?;
     let Some(headers_end) = raw.windows(4).position(|window| window == b"\r\n\r\n") else {
         return Err("invalid HTTP response from local ptys".into());
     };
@@ -512,7 +529,7 @@ mod local_server_candidate_tests {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn local_server_candidates() -> Vec<LocalServerCandidate> {
     let Some(run_dir) = ptys_dir().map(|path| path.join("run")) else {
         return Vec::new();
@@ -534,7 +551,7 @@ fn local_server_candidates() -> Vec<LocalServerCandidate> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn local_server_tool() -> LocalServerTool {
     match resolve_ptys() {
         Ok(executable) => LocalServerTool {
@@ -555,7 +572,7 @@ fn local_server_tool() -> LocalServerTool {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn local_server_install() -> LocalServerCommandResult {
     let output = match user_command("npm")
         .args(["install", "--global", "ptys@latest"])
@@ -589,7 +606,7 @@ fn local_server_install() -> LocalServerCommandResult {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn local_server_start() -> LocalServerCommandResult {
     let executable = match resolve_ptys() {
         Ok(executable) => executable,
@@ -627,7 +644,7 @@ fn local_server_start() -> LocalServerCommandResult {
 }
 
 #[cfg(unix)]
-#[tauri::command]
+#[tauri::command(async)]
 fn local_server_request(
     instance: String,
     path: String,
