@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { createKernelRegistry } from "./registry.svelte";
-import { dispatchReservedKeydown, isMacPlatform, type ReservedKeyEvent } from "./keydispatch";
+import { dispatchReservedKeydown, isMacPlatform, isTextEntryTarget, type ReservedKeyEvent } from "./keydispatch";
 import { keybindingsByAccelerator, resolveKeybindings } from "../../registry/keybindings";
 import { beginKeyCapture } from "../../registry/keyCapture";
 
@@ -16,6 +16,17 @@ function makeMockEvent(
     ...overrides,
     preventDefault: vi.fn<() => void>(),
     stopPropagation: vi.fn<() => void>(),
+  };
+}
+
+function elementLike(
+  tagName: string,
+  { contentEditable = false, insideTerminal = false }: { contentEditable?: boolean; insideTerminal?: boolean } = {},
+) {
+  return {
+    tagName,
+    isContentEditable: contentEditable,
+    closest: (selector: string) => (selector === ".xterm" && insideTerminal ? {} : null),
   };
 }
 
@@ -123,6 +134,28 @@ describe("dispatchReservedKeydown", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves a chord alone while a text field outside the terminal has focus", () => {
+    const run = vi.fn();
+    const registry = registryWith("terminal.paste", run);
+    const event = { ...makeMockEvent({ code: "KeyV", metaKey: true }), target: elementLike("INPUT") };
+
+    expect(dispatchReservedKeydown(event, registry, { "Super+KeyV": "terminal.paste" })).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("still fires for the helper textarea xterm keeps focused", () => {
+    const run = vi.fn();
+    const registry = registryWith("terminal.paste", run);
+    const event = {
+      ...makeMockEvent({ code: "KeyV", metaKey: true }),
+      target: elementLike("TEXTAREA", { insideTerminal: true }),
+    };
+
+    expect(dispatchReservedKeydown(event, registry, { "Super+KeyV": "terminal.paste" })).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves plain Ctrl+K to readline's kill-line by default", () => {
     const run = vi.fn();
     const registry = registryWith("palette.open", run);
@@ -130,6 +163,23 @@ describe("dispatchReservedKeydown", () => {
 
     expect(dispatchReservedKeydown(makeMockEvent({ code: "KeyK", ctrlKey: true }), registry, keybindings)).toBe(false);
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("isTextEntryTarget", () => {
+  it("covers inputs, textareas, selects and contenteditable hosts", () => {
+    expect(isTextEntryTarget(elementLike("INPUT"))).toBe(true);
+    expect(isTextEntryTarget(elementLike("TEXTAREA"))).toBe(true);
+    expect(isTextEntryTarget(elementLike("SELECT"))).toBe(true);
+    expect(isTextEntryTarget(elementLike("DIV", { contentEditable: true }))).toBe(true);
+  });
+
+  it("ignores non-editable targets and anything inside the terminal", () => {
+    expect(isTextEntryTarget(elementLike("DIV"))).toBe(false);
+    expect(isTextEntryTarget(elementLike("BUTTON"))).toBe(false);
+    expect(isTextEntryTarget(elementLike("INPUT", { insideTerminal: true }))).toBe(false);
+    expect(isTextEntryTarget(undefined)).toBe(false);
+    expect(isTextEntryTarget(null)).toBe(false);
   });
 });
 
