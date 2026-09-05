@@ -27,6 +27,7 @@
   import { revealAndFocusCurrentWindow } from "./kernel/platform/windowAttention";
   import { suppressNativeContextMenu } from "./kernel/platform/nativeContextMenu";
   import type { AttentionTarget } from "./kernel/servers/serverRegistry.svelte";
+  import { canAttach, credentialFor, credentialKey, type ResolvedCredential } from "./kernel/servers/serverCredential";
   import { getKeybindingOverrides, saveKeybindingOverrides } from "./kernel/storage/keybindingStore";
   import { isMacPlatform } from "./kernel/extensibility/keydispatch";
   import { keybindingsByAccelerator, resolveKeybindings, type KeybindingOverrides } from "./registry/keybindings";
@@ -59,7 +60,8 @@
   let focusedSessionWorkspaceId = $derived(sessions.find((session) => session.id === focusedSessionId)?.workspaceId ?? selectedWorkspaceId);
   let serverInfo = $derived(conn?.info);
   let tokenStorageError = $derived(conn?.storageError);
-  let resolvedToken = $state<string | undefined>(undefined);
+  let resolvedCredential = $state<ResolvedCredential | undefined>(undefined);
+  let resolvedToken = $derived(credentialFor(resolvedCredential, conn?.config));
   let hasServers = $derived(registry.servers.length > 0);
   type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "deep-link" | "local-discovery";
 
@@ -144,19 +146,20 @@
   $effect(() => {
     const config = conn?.config;
     if (!config) {
-      resolvedToken = undefined;
+      resolvedCredential = undefined;
       clearError("token");
       return;
     }
     let cancelled = false;
     if (!serverUsesToken(config)) {
-      resolvedToken = undefined;
+      resolvedCredential = undefined;
       clearError("token");
       return;
     }
+    const key = credentialKey(config);
     tokenStore.get(config.tokenRef).then((token) => {
       if (!cancelled) {
-        resolvedToken = token;
+        resolvedCredential = { key, token };
         clearError("token");
       }
     }).catch((err) => {
@@ -549,7 +552,7 @@
         />
       {:else}
         <div class="attach-container" bind:this={mainContainer}>
-          {#if focusedSessionId && conn && (resolvedToken || !serverUsesToken(conn.config))}
+          {#if focusedSessionId && conn && canAttach(resolvedCredential, conn.config)}
             {#key focusedSessionId}
               <AttachPane
                 baseUrl={conn.config.url}
