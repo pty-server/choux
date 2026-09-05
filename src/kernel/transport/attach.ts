@@ -184,9 +184,7 @@ export class AttachController {
   resize(cols: number, rows: number): void {
     if (this.options.readonly) return;
     if (this.stateValue !== "attached" && this.stateValue !== "connecting") return;
-    if (!this.sendControl({ t: "resize", cols, rows })) {
-      this.pendingResize = { cols, rows };
-    }
+    this.pendingResize = this.sendControl({ t: "resize", cols, rows }) ? undefined : { cols, rows };
   }
 
   close(): void {

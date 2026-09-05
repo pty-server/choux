@@ -151,6 +151,20 @@ describe("AttachController server-authoritative dimensions", () => {
     expect(JSON.parse(replayed)).toEqual({ t: "resize", cols: 120, rows: 40 });
   });
 
+  it("drops the queued size once a later resize gets through", () => {
+    const { controller, socket } = createController();
+
+    controller.resize(120, 40);
+    openSocket(socket);
+    controller.resize(140, 50);
+    socket.onmessage?.({ data: JSON.stringify({ t: "ready", cols: 80, rows: 24 }) });
+
+    expect(socket.sent).toHaveLength(1);
+    const sent = socket.sent[0];
+    if (typeof sent !== "string") throw new Error("Expected a JSON resize frame");
+    expect(JSON.parse(sent)).toEqual({ t: "resize", cols: 140, rows: 50 });
+  });
+
   it("stays quiet when the server already attached at the dropped size", () => {
     const { controller, socket } = createController();
 
