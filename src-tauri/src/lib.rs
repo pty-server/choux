@@ -59,6 +59,7 @@ struct LocalServerCandidate {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LocalServerTool {
     available: bool,
     npm_available: bool,
@@ -1007,4 +1008,23 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running choux");
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+
+    #[test]
+    fn local_server_tool_serializes_the_keys_the_client_reads() {
+        let payload = serde_json::to_value(LocalServerTool {
+            available: false,
+            npm_available: true,
+            executable: None,
+            message: None,
+        })
+        .expect("serializable");
+
+        assert_eq!(payload.get("npmAvailable"), Some(&serde_json::json!(true)));
+        assert_eq!(payload.get("npm_available"), None);
+    }
 }
