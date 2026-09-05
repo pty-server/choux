@@ -148,6 +148,7 @@ export class AttachController {
   private reconnectScheduled = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private statusValue: AttachStatus = "online";
+  private pendingResize: AttachDims | undefined;
 
   constructor(options: AttachOptions) {
     this.options = options;
@@ -183,7 +184,9 @@ export class AttachController {
   resize(cols: number, rows: number): void {
     if (this.options.readonly) return;
     if (this.stateValue !== "attached" && this.stateValue !== "connecting") return;
-    this.sendControl({ t: "resize", cols, rows });
+    if (!this.sendControl({ t: "resize", cols, rows })) {
+      this.pendingResize = { cols, rows };
+    }
   }
 
   close(): void {
@@ -250,14 +253,22 @@ export class AttachController {
     this.socket.send(data);
   }
 
-  private sendControl(message: Record<string, unknown>): void {
+  private sendControl(message: Record<string, unknown>): boolean {
     // A ResizeObserver can fire a resize before the socket finishes
     // connecting (the initial cols/rows already ride in the attach URL), and
     // sending on a CONNECTING/CLOSING socket throws InvalidStateError. Only
-    // send when the socket is OPEN; a dropped pre-open resize is corrected by
-    // the next fit after `ready`.
-    if (this.socket.readyState !== SOCKET_OPEN) return;
+    // send when the socket is OPEN; a dropped pre-open resize is replayed on
+    // the `ready` frame.
+    if (this.socket.readyState !== SOCKET_OPEN) return false;
     this.socket.send(JSON.stringify(message));
+    return true;
+  }
+
+  private flushPendingResize(cols: number, rows: number): void {
+    const pending = this.pendingResize;
+    this.pendingResize = undefined;
+    if (pending === undefined || (pending.cols === cols && pending.rows === rows)) return;
+    this.resize(pending.cols, pending.rows);
   }
 
   private handleMessage(data: unknown): void {
@@ -298,6 +309,7 @@ export class AttachController {
           this.terminal.resize(cols, rows);
         }
         this.options.onReady?.({ cols, rows });
+        this.flushPendingResize(cols, rows);
         if (
           serverProtocol !== undefined
           && this.options.clientProtocolVersion !== undefined

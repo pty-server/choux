@@ -136,6 +136,31 @@ describe("AttachController server-authoritative dimensions", () => {
     expect(terminal.rows).toBe(35);
   });
 
+  it("replays a resize the socket was too early to carry", () => {
+    const { controller, socket } = createController();
+
+    controller.resize(120, 40);
+    expect(socket.sent).toHaveLength(0);
+
+    openSocket(socket);
+    socket.onmessage?.({ data: JSON.stringify({ t: "ready", cols: 80, rows: 24 }) });
+
+    expect(socket.sent).toHaveLength(1);
+    const replayed = socket.sent[0];
+    if (typeof replayed !== "string") throw new Error("Expected a JSON resize frame");
+    expect(JSON.parse(replayed)).toEqual({ t: "resize", cols: 120, rows: 40 });
+  });
+
+  it("stays quiet when the server already attached at the dropped size", () => {
+    const { controller, socket } = createController();
+
+    controller.resize(120, 40);
+    openSocket(socket);
+    socket.onmessage?.({ data: JSON.stringify({ t: "ready", cols: 120, rows: 40 }) });
+
+    expect(socket.sent).toHaveLength(0);
+  });
+
   it("does not send resize requests for readonly controllers", () => {
     const { controller, socket } = createController({ readonly: true });
     openSocket(socket);
