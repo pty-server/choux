@@ -51,7 +51,7 @@ function startServer() {
   const proc = spawn(
     process.execPath,
     [cliPath, "server", "--listen", `${host}:${port}`, "--token", token],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: isolatedHome(), PTYS_TEST_KICK: "1" } },
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: isolatedHome() } },
   );
   let stdout = "";
   let stderr = "";
@@ -76,19 +76,32 @@ async function apiFetch(path, options = {}) {
   return body;
 }
 
-// Test hook: POST to the server-side kick endpoint (only available when
-// PTYS_TEST_KICK=1). `reason` is passed as a query string, not a body,
-// because the test hook reads it from the URL.
-async function kick(sessionId, reason) {
-  const url = reason ? `/v1/sessions/${sessionId}/attach/kick?reason=${encodeURIComponent(reason)}` : `/v1/sessions/${sessionId}/attach/kick`;
-  const response = await fetch(`${baseUrl}${url}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}` },
-  });
-  const text = await response.text();
-  const body = text.length > 0 ? JSON.parse(text) : undefined;
-  if (!response.ok) throw new Error(`POST ${url} -> ${response.status}: ${text}`);
-  return body;
+// The server hangs up on a client on its own terms only, so the two
+// server-side deaths are reproduced the way they really happen: the transport
+// vanishing under the controller (onclose 1006, no exit frame), and the
+// backpressure kill ptys performs on a read-write client that stops draining -
+// the only path that puts {t:"error",reason} on the wire before the close.
+function dropTransport(sockets) {
+  sockets.at(-1).terminate();
+}
+
+async function stallSocket(sockets, ms) {
+  const raw = sockets.at(-1)._socket;
+  raw.pause();
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  raw.resume();
+}
+
+// How long a stall it takes to bury the server's 16MB ceiling depends on how
+// much of this machine the flooding session gets, so escalate rather than bet
+// on one duration. The error only becomes visible once the socket drains.
+async function stallUntilKicked(sockets, events) {
+  for (const stallMs of [3000, 6000, 12000]) {
+    await stallSocket(sockets, stallMs);
+    const kicked = await waitFor(() => events.find((event) => event.type === "error"), 3000).catch(() => undefined);
+    if (kicked) return kicked;
+  }
+  throw new Error("stallUntilKicked: the server never kicked the stalled client");
 }
 
 async function createSession(overrides = {}) {
@@ -116,6 +129,7 @@ function bufferText(term) {
 function drive(sessionId, { cols = 80, rows = 24, ...rest } = {}) {
   const term = new Terminal({ cols, rows, allowProposedApi: true });
   const events = [];
+  const sockets = [];
   const controller = new AttachController({
     baseUrl,
     sessionId,
@@ -123,7 +137,11 @@ function drive(sessionId, { cols = 80, rows = 24, ...rest } = {}) {
     cols,
     rows,
     terminal: term,
-    createSocket: (url, protocols) => new WebSocket(url, protocols),
+    createSocket: (url, protocols) => {
+      const socket = new WebSocket(url, protocols);
+      sockets.push(socket);
+      return socket;
+    },
     onReady: (dims) => events.push({ type: "ready", ...dims }),
     onResized: (dims) => events.push({ type: "resized", ...dims }),
     onExit: (info) => events.push({ type: "exit", ...info }),
@@ -131,7 +149,7 @@ function drive(sessionId, { cols = 80, rows = 24, ...rest } = {}) {
     onClose: (info) => events.push({ type: "close", ...info }),
     ...rest,
   });
-  return { term, controller, events };
+  return { term, controller, events, sockets };
 }
 
 function waitForEvent(events, type, timeoutMs = 5000) {
@@ -276,7 +294,7 @@ test("AttachController: attaching to an already-exited session is a normal path 
   assert.ok(order.indexOf("ready") < order.indexOf("exit"), `expected ready before exit, got: ${order.join(",")}`);
 });
 
-test("AttachController: reconnect after abrupt server-side kill, with real state survival", async () => {
+test("AttachController: reconnect after an abrupt transport drop, with real state survival", async () => {
   const session = await createSession({
     name: "attach-reconnect",
     args: ["-c", "stty -echo; printf 'BEFORE-KILL-123\\n'; cat; exit 0"],
@@ -287,14 +305,13 @@ test("AttachController: reconnect after abrupt server-side kill, with real state
     return !fetched.exited ? fetched : undefined;
   }, 5000);
 
-  const { term, controller, events } = drive(session.id);
+  const { term, controller, events, sockets } = drive(session.id);
 
   await waitForEvent(events, "ready");
   await waitFor(() => (bufferText(term).includes("BEFORE-KILL-123") ? true : undefined));
 
-  // Abrupt kill: terminate() -> onclose code 1006, no exit message.
-  const kickResult = await kick(session.id);
-  assert.equal(kickResult.kicked > 0, true, "at least one client was kicked");
+  // Abrupt drop: onclose code 1006, no exit message.
+  dropTransport(sockets);
 
   await waitFor(() => (controller.status === "reconnecting" ? true : undefined));
 
@@ -304,8 +321,9 @@ test("AttachController: reconnect after abrupt server-side kill, with real state
 
   await waitFor(() => (controller.status === "online" ? true : undefined));
 
-  // Buffer should still contain the pre-kill text (server-side session state survived).
-  assert.ok(bufferText(term).includes("BEFORE-KILL-123"), "buffer should retain pre-kill text after reconnect");
+  // Buffer should still contain the pre-kill text (server-side session state
+  // survived). The replayed snapshot trails the ready frame announcing it.
+  await waitFor(() => (bufferText(term).includes("BEFORE-KILL-123") ? true : undefined), 5000);
 
   // Write new text and confirm it lands (proves the reattached socket is live).
   term.input("AFTER-RECONNECT-OK\r", true);
@@ -358,14 +376,14 @@ test("AttachController: backoff is bounded and jittered", async () => {
   // Live test: observe real controller scheduling decisions.
   const session = await createSession({ name: "attach-backoff", cmd: "cat" });
   const samples = [];
-  const { term, controller, events } = drive(session.id, {
+  const { controller, events, sockets } = drive(session.id, {
     onReconnectScheduled(info) {
       samples.push(info);
     },
   });
 
   await waitForEvent(events, "ready");
-  await kick(session.id);
+  dropTransport(sockets);
 
   await waitFor(() => (controller.status === "reconnecting" ? true : undefined));
   await waitForEvent(events, "ready");
@@ -385,24 +403,33 @@ test("AttachController: backoff is bounded and jittered", async () => {
 });
 
 test("AttachController: error{reason} triggers reconnect", async () => {
-  const session = await createSession({ name: "attach-error-reconnect", cmd: "cat" });
-  const { term, controller, events } = drive(session.id);
+  // `yes` is the flood that gets this client kicked; it is killed at the end so
+  // it does not keep a core busy for the rest of the suite.
+  const session = await createSession({ name: "attach-error-reconnect", cmd: "yes", args: ["x".repeat(400)] });
+  const reconnects = [];
+  const { controller, events, sockets } = drive(session.id, {
+    onReconnectScheduled: (info) => reconnects.push(info),
+  });
 
   await waitForEvent(events, "ready");
 
-  // Kick with a reason: client receives {t:"error",reason} then onclose.
-  await kick(session.id, "client too slow");
-
-  const errorEvent = await waitForEvent(events, "error");
-  assert.ok(errorEvent, "expected error event after kick with reason");
+  const errorEvent = await stallUntilKicked(sockets, events);
   assert.equal(errorEvent.reason, "client too slow");
 
-  await waitFor(() => (controller.status === "reconnecting" ? true : undefined));
-  await waitFor(() => (events.filter((e) => e.type === "ready").length >= 2 ? true : undefined), 5000);
-  await waitFor(() => (controller.status === "online" ? true : undefined));
+  // Recorded evidence, not a status poll: the reconnect can already have
+  // completed by the time the error surfaces on the drained socket.
+  await waitFor(() => (reconnects.length > 0 ? true : undefined), 15000);
+  await waitFor(() => (events.filter((e) => e.type === "ready").length >= 2 ? true : undefined), 15000);
+
+  const listed = await apiFetch(`/v1/sessions/${session.id}`);
+  assert.equal(listed.id, session.id, "the session outlives the client it kicked");
 
   controller.close();
-});
+  await fetch(`${baseUrl}/v1/sessions/${session.id}?signal=SIGKILL`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${token}` },
+  });
+}, 60000);
 
 test("AttachController: clean exit does NOT reconnect", async () => {
   const session = await createSession({
