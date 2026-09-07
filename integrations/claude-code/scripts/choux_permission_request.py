@@ -12,6 +12,9 @@ from typing import Any
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_MESSAGE_LENGTH = 1_500
 CONTENT_PREVIEW_LENGTH = 1_000
+MAX_DIFF_LENGTH = 24_000
+MIN_DIFF_LENGTH = 1_000
+MAX_EVENT_BYTES = 60_000
 SCOPES = {
     "localSettings": " for this project",
     "projectSettings": " for this project",
@@ -61,6 +64,16 @@ def preview(value: str) -> str:
     if len(value) <= CONTENT_PREVIEW_LENGTH:
         return value
     return f"{value[:CONTENT_PREVIEW_LENGTH]}\n\n[preview truncated]"
+
+
+def diff_preview(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}\n\n[preview truncated]"
+
+
+def event_bytes(question: dict[str, Any]) -> int:
+    return len(json.dumps(question, ensure_ascii=False).encode("utf-8"))
 
 
 def file_change_details(tool_name: object, details: object) -> list[str] | None:
@@ -220,15 +233,12 @@ def fetch_question(tool_input: dict[str, Any], suggestions: list[dict[str, Any]]
 
 
 def diff_question(title: str, message: str, path: str, before: object, after: object, badges: list[str], suggestions: list[dict[str, Any]]) -> dict[str, Any]:
-    block: dict[str, Any] = {
-        "kind": "diff",
-        "path": path,
-        "before": preview(before) if isinstance(before, str) else "",
-        "after": preview(after) if isinstance(after, str) else "",
-    }
+    before_text = before if isinstance(before, str) else ""
+    after_text = after if isinstance(after, str) else ""
+    block: dict[str, Any] = {"kind": "diff", "path": path}
     if badges:
         block["badges"] = badges
-    return {
+    question = {
         "type": "choux.question",
         "data": {
             "title": title,
@@ -237,6 +247,14 @@ def diff_question(title: str, message: str, path: str, before: object, after: ob
             "blocks": [block],
         },
     }
+    limit = MAX_DIFF_LENGTH
+    block["before"] = diff_preview(before_text, limit)
+    block["after"] = diff_preview(after_text, limit)
+    while limit > MIN_DIFF_LENGTH and event_bytes(question) > MAX_EVENT_BYTES:
+        limit //= 2
+        block["before"] = diff_preview(before_text, limit)
+        block["after"] = diff_preview(after_text, limit)
+    return question
 
 
 def edit_question(tool_input: dict[str, Any], description: str | None, suggestions: list[dict[str, Any]]) -> dict[str, Any]:
