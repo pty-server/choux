@@ -172,7 +172,7 @@
   h2 { font-size: 1rem; }
   .message { flex: 0 0 auto; max-height: 30dvh; padding-right: var(--sp-1); white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; line-height: 1.45; }
   .blocks { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-2); overflow-y: auto; }
-  .block { display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .block { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
   .block header { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); background: var(--bg-elevated); border-bottom: 1px solid var(--border); font-size: 0.7rem; }
   .kind { color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.06em; }
   .cwd { flex: 1 1 auto; min-width: 0; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -187,7 +187,7 @@
   dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; padding: var(--sp-2); font-size: 0.85rem; }
   dt { color: var(--fg-dim); }
   dd { margin: 0; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .options { flex: 0 1 auto; min-height: 0; display: grid; align-content: start; gap: var(--sp-2); padding-right: var(--sp-1); overflow-y: auto; }
+  .options { flex: 0 0 auto; max-height: 40dvh; display: grid; align-content: start; gap: var(--sp-2); padding-right: var(--sp-1); overflow-y: auto; }
   .option { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: var(--sp-2) var(--sp-3); color: var(--fg); text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
   .option:hover, .option:focus-visible { border-color: var(--accent); }
   .option:focus-visible, .cancel:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
