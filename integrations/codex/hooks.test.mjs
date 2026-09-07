@@ -241,6 +241,62 @@ describe("choux_permission_request.py", () => {
     expect(block.command).toContain("[truncated]");
   });
 
+  it("sends an ordinary patch whole instead of clipping it to a preview", async () => {
+    fakePtys([{ exit: 0, stdout: '{"answer":"deny"}' }]);
+    const body = Array.from({ length: 400 }, (_, index) => `+line ${index}: ${"filler ".repeat(6)}`).join("\n");
+    const patch = `*** Begin Patch\n*** Add File: src/big.ts\n${body}\n*** End Patch`;
+    await run(PERMISSION_SCRIPT, JSON.stringify({
+      ...bashRequest,
+      tool_name: "apply_patch",
+      tool_input: { command: patch },
+    }), { PTYS_EVENT_ENDPOINT: "http://127.0.0.1:1/v1/events" });
+
+    const [block] = question().data.blocks;
+    expect(block.after.length).toBeGreaterThan(15000);
+    expect(block.after).not.toContain("[truncated]");
+  });
+
+  it("keeps a patch spanning many files inside the body limit ptys enforces", async () => {
+    fakePtys([{ exit: 0, stdout: '{"answer":"deny"}' }]);
+    const file = (name) => {
+      const body = Array.from({ length: 400 }, (_, index) => `+${name} ${index}: ${"filler ".repeat(6)}`).join("\n");
+      return `*** Add File: src/${name}.ts\n${body}`;
+    };
+    const names = Array.from({ length: 24 }, (_, index) => `file${index}`);
+    const patch = `*** Begin Patch\n${names.map(file).join("\n")}\n*** End Patch`;
+    await run(PERMISSION_SCRIPT, JSON.stringify({
+      ...bashRequest,
+      tool_name: "apply_patch",
+      tool_input: { command: patch },
+    }), { PTYS_EVENT_ENDPOINT: "http://127.0.0.1:1/v1/events" });
+
+    const [call] = calls();
+    const payload = call.argv[call.argv.length - 1];
+    expect(Buffer.byteLength(payload, "utf8")).toBeLessThan(65536);
+    expect(question().data.blocks.length).toBeGreaterThan(0);
+  });
+
+  it("names the files it had to drop rather than losing the question", async () => {
+    fakePtys([{ exit: 0, stdout: '{"answer":"deny"}' }]);
+    const file = (name) => {
+      const body = Array.from({ length: 60 }, (_, index) => `+${name} ${index}: ${"filler ".repeat(6)}`).join("\n");
+      return `*** Add File: src/${name}.ts\n${body}`;
+    };
+    const names = Array.from({ length: 100 }, (_, index) => `file${index}`);
+    const patch = `*** Begin Patch\n${names.map(file).join("\n")}\n*** End Patch`;
+    await run(PERMISSION_SCRIPT, JSON.stringify({
+      ...bashRequest,
+      tool_name: "apply_patch",
+      tool_input: { command: patch },
+    }), { PTYS_EVENT_ENDPOINT: "http://127.0.0.1:1/v1/events" });
+
+    const [call] = calls();
+    expect(Buffer.byteLength(call.argv[call.argv.length - 1], "utf8")).toBeLessThan(65536);
+    const blocks = question().data.blocks;
+    expect(blocks[0]).toMatchObject({ kind: "diff", path: "src/file0.ts" });
+    expect(blocks[blocks.length - 1]).toMatchObject({ kind: "fields", title: "Not shown" });
+  });
+
   it("sends an unknown structured tool as allowlisted fields", async () => {
     fakePtys([{ exit: 0, stdout: '{"answer":"allow"}' }]);
     await run(PERMISSION_SCRIPT, JSON.stringify({

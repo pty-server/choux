@@ -14,6 +14,9 @@ DEFAULT_TIMEOUT_SECONDS = 60
 SUBPROCESS_GRACE_SECONDS = 2
 MAX_BLOCK_LENGTH = 4_000
 MAX_FIELD_LENGTH = 500
+MAX_DIFF_LENGTH = 24_000
+MIN_DIFF_LENGTH = 1_000
+MAX_EVENT_BYTES = 60_000
 
 # Codex sends the canonical payload name, not the matcher alias: `apply_patch` rather
 # than Write/Edit, `spawn_agent` rather than Agent.
@@ -79,6 +82,10 @@ def clipped(value: str, limit: int = MAX_BLOCK_LENGTH) -> str:
     if len(value) <= limit:
         return value
     return f"{value[:limit]}\n\n[truncated]"
+
+
+def event_bytes(prepared: dict[str, Any]) -> int:
+    return len(json.dumps(prepared, ensure_ascii=False).encode("utf-8"))
 
 
 def allow_option() -> dict[str, Any]:
@@ -163,7 +170,7 @@ def diff_sides(lines: list[str], action: str) -> tuple[str, str]:
             after.append(line)
         elif action == "delete":
             before.append(line)
-    return clipped("\n".join(before)), clipped("\n".join(after))
+    return "\n".join(before), "\n".join(after)
 
 
 def patch_blocks(patch: str) -> list[dict[str, Any]]:
@@ -185,13 +192,49 @@ def patch_blocks(patch: str) -> list[dict[str, Any]]:
     return blocks
 
 
+def omitted_block(paths: list[str]) -> dict[str, Any]:
+    return {
+        "kind": "fields",
+        "title": "Not shown",
+        "fields": [{"label": "Files", "value": clipped(", ".join(paths), MAX_FIELD_LENGTH)}],
+    }
+
+
+def fitted(prepared: dict[str, Any]) -> dict[str, Any]:
+    blocks = prepared["data"].get("blocks")
+    if not blocks:
+        return prepared
+    diffs = [(block, block["before"], block["after"]) for block in blocks if block["kind"] == "diff"]
+    limit = MAX_DIFF_LENGTH
+    for block, before, after in diffs:
+        block["before"] = clipped(before, limit)
+        block["after"] = clipped(after, limit)
+    while limit > MIN_DIFF_LENGTH and event_bytes(prepared) > MAX_EVENT_BYTES:
+        limit //= 2
+        for block, before, after in diffs:
+            block["before"] = clipped(before, limit)
+            block["after"] = clipped(after, limit)
+    if event_bytes(prepared) <= MAX_EVENT_BYTES:
+        return prepared
+    kept = list(blocks)
+    dropped: list[str] = []
+    while len(kept) > 1:
+        removed = kept.pop()
+        if removed.get("path"):
+            dropped.insert(0, removed["path"])
+        prepared["data"]["blocks"] = [*kept, omitted_block(dropped)]
+        if event_bytes(prepared) <= MAX_EVENT_BYTES:
+            break
+    return prepared
+
+
 def patch_question(patch: str) -> dict[str, Any]:
     blocks = patch_blocks(patch)
-    return question(
+    return fitted(question(
         "Apply a patch",
         "Codex wants to change files.",
         blocks or [{"kind": "command", "command": clipped(patch), "badges": ["patch"]}],
-    )
+    ))
 
 
 def listed_fields(tool_input: dict[str, Any]) -> list[dict[str, str]]:
