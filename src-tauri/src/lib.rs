@@ -73,8 +73,14 @@ struct LocalServerCommandResult {
     message: Option<String>,
 }
 
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_dir())
+}
+
 fn ptys_dir() -> Option<PathBuf> {
-    env::var_os("HOME").map(|home| PathBuf::from(home).join(".ptys"))
+    home_dir().map(|home| home.join(".ptys"))
 }
 
 fn command_message(output: &std::process::Output) -> Option<String> {
@@ -163,7 +169,7 @@ fn common_tool_dirs() -> Vec<PathBuf> {
         PathBuf::from("/usr/local/bin"),
         PathBuf::from("/opt/local/bin"),
     ];
-    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = home_dir() {
         dirs.push(home.join(".volta/bin"));
         dirs.push(home.join(".bun/bin"));
         dirs.push(home.join(".local/bin"));
@@ -206,6 +212,9 @@ fn user_path() -> &'static str {
 fn user_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(program);
     command.env("PATH", user_path()).stdin(Stdio::null());
+    if let Some(home) = home_dir() {
+        command.current_dir(home);
+    }
     for (name, value) in user_locale() {
         match value {
             Some(value) => command.env(name, value),
