@@ -1,4 +1,4 @@
-name: Release (Linux)
+name: Release
 
 on:
   push:
@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  BUNDLE_ID: dev.pty-server.choux
+  TEAM_ID: 5AU27XG69A
 
 jobs:
   validate:
@@ -26,10 +30,55 @@ jobs:
           fi
           echo "version $conf"
 
-  build:
-    name: Build Linux bundles
+  # One release, created once. Letting each build job find-or-create its own left
+  # v0.2.2 with the Linux bundles on the published release and the notarized dmg
+  # stranded on a second, draft release for the same tag.
+  create-release:
+    name: Create draft release
     needs: validate
     runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create or reuse the draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            -q "[.[] | select(.tag_name == \"$GITHUB_REF_NAME\")] | first | .id // empty")"
+          if [ -n "$existing" ]; then
+            echo "reusing release $existing"
+            echo "release_id=$existing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          prerelease=false
+          case "$GITHUB_REF_NAME" in *-*) prerelease=true ;; esac
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$GITHUB_REF_NAME" \
+            -f name="Choux $GITHUB_REF_NAME" \
+            -F draft=true \
+            -F prerelease="$prerelease" \
+            -q .id)"
+          echo "created release $id"
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux bundles
+            os: ubuntu-latest
+            args: ""
+            rust_targets: ""
+          - name: macOS arm64 (signed, notarized)
+            os: macos-latest
+            args: "--target aarch64-apple-darwin"
+            rust_targets: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,21 +91,156 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
 
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential pkg-config libssl-dev libxdo-dev patchelf
 
+      - name: Check signing secrets are present
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secrets:$missing"
+            exit 1
+          fi
+
+      - name: Write App Store Connect API key
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          key_path="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm install
 
-      - name: Build and upload to draft release
+      - name: Build and upload to the draft release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Choux ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+      # The dmg bundler folds the .app into the disk image and then deletes it,
+      # so the shipped app can only be verified from inside the mounted dmg.
+      - name: Locate a single aarch64 DMG
+        if: runner.os == 'macOS'
+        run: |
+          shopt -s nullglob
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          dmgs=("$bundle"/dmg/*.dmg)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one dmg, found ${#dmgs[@]}"
+            exit 1
+          fi
+          case "${dmgs[0]}" in
+            *_aarch64.dmg) echo "${dmgs[0]}" ;;
+            *) echo "::error::dmg is not aarch64: ${dmgs[0]}"; exit 1 ;;
+          esac
+          echo "DMG_PATH=${dmgs[0]}" >> "$GITHUB_ENV"
+
+      - name: Mount the DMG
+        if: runner.os == 'macOS'
+        run: |
+          shopt -s nullglob
+          mount_point="$RUNNER_TEMP/dmg"
+          mkdir -p "$mount_point"
+          hdiutil attach "$DMG_PATH" -readonly -nobrowse -mountpoint "$mount_point"
+          echo "MOUNT_POINT=$mount_point" >> "$GITHUB_ENV"
+          apps=("$mount_point"/*.app)
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .app in $DMG_PATH, found ${#apps[@]}"
+            exit 1
+          fi
+          echo "${apps[0]}"
+          echo "APP_PATH=${apps[0]}" >> "$GITHUB_ENV"
+
+      - name: Verify code signature
+        if: runner.os == 'macOS'
+        run: |
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign --display --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Authority|TeamIdentifier'
+
+      - name: Verify signing team
+        if: runner.os == 'macOS'
+        run: |
+          got="$(codesign --display --verbose=4 "$APP_PATH" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+          if [ "$got" != "$TEAM_ID" ]; then
+            echo "::error::signed by team $got, expected $TEAM_ID"
+            exit 1
+          fi
+          echo "$got"
+
+      - name: Verify Gatekeeper acceptance
+        if: runner.os == 'macOS'
+        run: spctl --assess --type execute --verbose=4 "$APP_PATH"
+
+      - name: Verify notarization ticket
+        if: runner.os == 'macOS'
+        run: xcrun stapler validate "$APP_PATH"
+
+      - name: Verify bundle identifier
+        if: runner.os == 'macOS'
+        run: |
+          got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")"
+          if [ "$got" != "$BUNDLE_ID" ]; then
+            echo "::error::bundle identifier is $got, expected $BUNDLE_ID"
+            exit 1
+          fi
+          echo "$got"
+
+      - name: Unmount the DMG
+        if: always() && runner.os == 'macOS' && env.MOUNT_POINT != ''
+        run: hdiutil detach "$MOUNT_POINT" || hdiutil detach "$MOUNT_POINT" -force
+
+  # Guards against publishing a release that is missing a platform's bundles, which
+  # is what left v0.2.2 shipping without its dmg.
+  check-assets:
+    name: Check every bundle uploaded
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: List the draft release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          names="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate -q '.[].name')"
+          echo "$names"
+          missing=""
+          for expected in "choux_${version}_aarch64.dmg" \
+                          "choux_${version}_amd64.deb" \
+                          "choux_${version}_amd64.AppImage"; do
+            printf '%s\n' "$names" | grep -qxF "$expected" || missing="$missing $expected"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::draft release is missing:$missing"
+            exit 1
+          fi
