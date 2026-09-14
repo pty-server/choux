@@ -21,6 +21,7 @@
   import { provideServerRegistry } from "./registry/context";
   import LocalServerDialog from "./features/servers/LocalServerDialog.svelte";
   import { ptysReleaseWatch } from "./features/servers/ptysReleaseWatch.svelte";
+  import { appUpdateWatch } from "./kernel/platform/appUpdateWatch.svelte";
   import SettingsPage from "./features/settings/SettingsPage.svelte";
   import { getTerminalSettings, saveTerminalSettings } from "./kernel/storage/terminalThemeStore";
   import { getGlobalShortcutSettings, saveGlobalShortcutSettings } from "./kernel/storage/globalShortcutStore";
@@ -118,6 +119,7 @@
     let unlisten = () => {};
     const restoreNativeContextMenu = suppressNativeContextMenu();
     const stopPtysReleaseWatch = ptysReleaseWatch.start();
+    const stopAppUpdateWatch = appUpdateWatch.start();
 
     void (async () => {
       try {
@@ -148,6 +150,7 @@
       unlisten();
       restoreNativeContextMenu();
       stopPtysReleaseWatch();
+      stopAppUpdateWatch();
     };
   });
 
@@ -674,6 +677,9 @@
           newProfileId={randomId}
           copyText={writeClipboardText}
           openUrl={openExternalUrl}
+          appUpdate={appUpdateWatch}
+          onCheckForUpdates={() => void appUpdateWatch.checkNow()}
+          onInstallUpdate={() => void appUpdateWatch.install()}
         />
       {:else}
         <div class="attach-container" bind:this={mainContainer}>

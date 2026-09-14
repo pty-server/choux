@@ -32,6 +32,10 @@ Apple Silicon only. Intel Macs get an architecture error from Homebrew instead o
 
 Download the `.deb` or `.AppImage` from [Releases](https://github.com/pty-server/choux/releases).
 
+### Updates
+
+Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root.
+
 ## Platform targets
 
 | Platform | Architecture | Format |

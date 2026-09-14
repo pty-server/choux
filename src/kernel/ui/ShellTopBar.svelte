@@ -3,6 +3,8 @@
   import ServerPopover from "../../features/servers/ServerPopover.svelte";
   import type { AggregateServerStatus } from "../../registry/types";
   import { isMacPlatform } from "../extensibility/keydispatch";
+  import { appUpdateButtonLabel, appUpdateStatusText } from "../../registry/appUpdate";
+  import { appUpdateWatch } from "../platform/appUpdateWatch.svelte";
 
   interface Props {
     aggregateStatus: AggregateServerStatus;
@@ -27,6 +29,12 @@
   let showServerPopover = $state(false);
   let isMaximized = $state(false);
   let isFullscreen = $state(false);
+  let updateLabel = $derived(appUpdateButtonLabel(appUpdateWatch.status));
+  let updateTitle = $derived(
+    appUpdateWatch.status.phase === "available"
+      ? `Install Choux ${appUpdateWatch.status.version} and restart`
+      : appUpdateStatusText(appUpdateWatch.status),
+  );
 
   function isTauriWindow(): boolean {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -121,6 +129,16 @@
     aria-hidden="true"
     onmousedown={startWindowDrag}
   ></div>
+  {#if updateLabel}
+    <button
+      type="button"
+      class="app-update"
+      class:failed={appUpdateWatch.status.phase === "failed"}
+      title={updateTitle}
+      disabled={appUpdateWatch.status.phase === "installing"}
+      onclick={() => void appUpdateWatch.install()}
+    >{updateLabel}</button>
+  {/if}
   <div class="server-manager">
     <button
       type="button"
@@ -277,6 +295,37 @@
   .server-manager {
     position: relative;
     flex-shrink: 0;
+  }
+
+  .app-update {
+    flex-shrink: 0;
+    padding: 2px var(--sp-2);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+
+  .app-update:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .app-update:disabled {
+    cursor: progress;
+  }
+
+  .app-update.failed {
+    border-color: var(--status-offline);
+    color: var(--status-offline);
+  }
+
+  .app-update:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .server-icon {

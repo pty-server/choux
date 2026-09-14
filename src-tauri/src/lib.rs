@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::OnceLock,
 };
@@ -960,6 +960,41 @@ fn hide_to_tray(window: &Window, event: &WindowEvent) {
     }
 }
 
+fn enclosing_app_bundle(executable: &Path) -> Option<&Path> {
+    executable.ancestors().find(|ancestor| {
+        ancestor
+            .extension()
+            .is_some_and(|extension| extension == "app")
+    })
+}
+
+#[cfg(unix)]
+fn on_read_only_volume(path: &Path) -> bool {
+    use std::{ffi::CString, mem::MaybeUninit, os::unix::ffi::OsStrExt};
+
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut stats = MaybeUninit::<libc::statvfs>::uninit();
+    unsafe {
+        libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) == 0
+            && stats.assume_init_ref().f_flag & libc::ST_RDONLY != 0
+    }
+}
+
+#[cfg(not(unix))]
+fn on_read_only_volume(_path: &Path) -> bool {
+    false
+}
+
+#[tauri::command]
+fn app_bundle_read_only() -> bool {
+    env::current_exe()
+        .ok()
+        .and_then(|executable| enclosing_app_bundle(&executable).map(on_read_only_volume))
+        .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -976,6 +1011,8 @@ pub fn run() {
             show_main_window(app);
         }));
         builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        builder = builder.plugin(tauri_plugin_process::init());
     }
 
     builder
@@ -1036,6 +1073,7 @@ pub fn run() {
             local_socket_open,
             local_socket_send,
             local_socket_close,
+            app_bundle_read_only,
         ])
         .run(tauri::generate_context!())
         .expect("error while running choux");
@@ -1057,5 +1095,54 @@ mod payload_tests {
 
         assert_eq!(payload.get("npmAvailable"), Some(&serde_json::json!(true)));
         assert_eq!(payload.get("npm_available"), None);
+    }
+}
+
+#[cfg(test)]
+mod app_bundle_tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_app_bundle_around_the_executable() {
+        assert_eq!(
+            enclosing_app_bundle(Path::new("/Volumes/choux/choux.app/Contents/MacOS/choux")),
+            Some(Path::new("/Volumes/choux/choux.app"))
+        );
+    }
+
+    #[test]
+    fn finds_no_app_bundle_for_a_bare_executable() {
+        assert_eq!(enclosing_app_bundle(Path::new("/usr/bin/choux")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_writable_directory_is_not_on_a_read_only_volume() {
+        assert!(!on_read_only_volume(&env::temp_dir()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_read_only_bind_mount_is_detected() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let Ok(mounts) = fs::read_to_string("/proc/self/mountinfo") else {
+            return;
+        };
+        let read_only_mount = mounts.lines().find_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let options = fields.get(5)?;
+            let mount_point = Path::new(fields.get(4)?);
+            let usable =
+                !mount_point.as_os_str().as_bytes().contains(&b'\\') && mount_point.exists();
+            (usable && options.split(',').any(|option| option == "ro"))
+                .then(|| mount_point.to_path_buf())
+        });
+        if let Some(mount_point) = read_only_mount {
+            assert!(
+                on_read_only_volume(&mount_point),
+                "{mount_point:?} is mounted ro"
+            );
+        }
     }
 }

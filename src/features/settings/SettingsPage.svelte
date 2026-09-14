@@ -27,7 +27,9 @@
     type SessionProfileDraft,
     type SessionProfiles,
   } from "../../registry/sessionProfiles";
+  import type { AppUpdateState } from "../../registry/appUpdate";
   import IntegrationsCard from "./IntegrationsCard.svelte";
+  import UpdatesCard from "./UpdatesCard.svelte";
 
   interface Props {
     settings: TerminalSettings;
@@ -51,6 +53,9 @@
     copyText: (text: string) => Promise<void>;
     /** Injected because opening a link in the host browser lives in the kernel. */
     openUrl: (url: string) => void;
+    appUpdate: AppUpdateState;
+    onCheckForUpdates: () => void;
+    onInstallUpdate: () => void;
   }
 
   let {
@@ -71,6 +76,9 @@
     newProfileId,
     copyText,
     openUrl,
+    appUpdate,
+    onCheckForUpdates,
+    onInstallUpdate,
   }: Props = $props();
   let draft = $derived<TerminalSettings>({ ...settings, theme: { ...settings.theme } });
   let saving = $state(false);
@@ -522,6 +530,10 @@
   </section>
 
   <IntegrationsCard {copyText} {openUrl} />
+
+  {#if appUpdate.supported}
+    <UpdatesCard update={appUpdate} onCheck={onCheckForUpdates} onInstall={onInstallUpdate} />
+  {/if}
 </section>
 
 <style>
