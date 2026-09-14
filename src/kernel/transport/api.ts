@@ -1,4 +1,13 @@
-import type { DirectoryListing, ExecSessionRequest, ExecSessionResponse, ServerInfo, Session, Workspace } from "@pty-server/protocol";
+import {
+  normalizeWorkspace,
+  type CreateWorkspaceRequest,
+  type DirectoryListing,
+  type ExecSessionRequest,
+  type ExecSessionResponse,
+  type LegacyWorkspace,
+  type ServerInfo,
+  type Session,
+} from "@pty-server/protocol";
 import { localPtysRequest } from "./localPtys";
 
 export interface ApiClientConfig {
@@ -12,6 +21,7 @@ export interface ApiClientConfig {
 
 export interface CreateSessionBody {
   workspaceId?: string;
+  cwd?: string;
   cmd?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -111,9 +121,10 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
 
   return {
     getInfo: () => request<ServerInfo>("/v1/info"),
-    getWorkspaces: () => request<Workspace[]>("/v1/workspaces"),
-    listDirectories: (path?: string, q?: string, cursor?: string) => {
+    getWorkspaces: async () => (await request<LegacyWorkspace[]>("/v1/workspaces")).map((workspace) => normalizeWorkspace(workspace)),
+    listDirectories: (path?: string, q?: string, cursor?: string, workspaceId?: string) => {
       const params = new URLSearchParams();
+      if (workspaceId !== undefined) params.set("workspaceId", workspaceId);
       if (path !== undefined) params.set("path", path);
       if (q !== undefined) params.set("q", q);
       if (cursor !== undefined) params.set("cursor", cursor);
@@ -122,7 +133,7 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     getSessions: (workspaceId?: string) => request<Session[]>(
       `/v1/sessions${workspaceId === undefined ? "" : `?workspaceId=${encodeURIComponent(workspaceId)}`}`,
     ),
-    createWorkspace: (path: string) => requestJson<Workspace>("/v1/workspaces", { path }),
+    createWorkspace: async (body: CreateWorkspaceRequest) => normalizeWorkspace(await requestJson<LegacyWorkspace>("/v1/workspaces", body)),
     createSession: (body: CreateSessionBody) => requestJson<Session>("/v1/sessions", body),
     updateSession: (id: string, name: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { name }, "PATCH"),
     deleteSession: (id: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}`, "DELETE"),

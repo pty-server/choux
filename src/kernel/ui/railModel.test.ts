@@ -4,7 +4,7 @@ import type { ServerConn, ServerStatus } from "../../registry/types";
 import { buildRailModel, tileStatus } from "./railModel";
 
 function workspace(id: string): Workspace {
-  return { id, path: `/workspaces/${id}`, realpath: `/workspaces/${id}`, createdAt: 1 };
+  return { id, kind: "project", name: id, path: `/workspaces/${id}`, realpath: `/workspaces/${id}`, createdAt: 1 };
 }
 
 function server(id: string, label: string, status: ServerStatus, workspaces: Workspace[], sessions: Session[] = [], accent = "#000"): ServerConn {

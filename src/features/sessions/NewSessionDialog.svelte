@@ -1,23 +1,38 @@
 <script lang="ts">
+  import type { DirectoryEntry, DirectoryListing, Workspace } from "@pty-server/protocol";
+  import { useServerRegistry } from "../../registry/context";
+  import { incompatibleServerMessage, runnerSupport } from "../../registry/protocolSupport";
   import { formatArgs, parseArgsString, type SessionProfile } from "../../registry/sessionProfiles";
+  import { cwdFieldValue } from "./cwdField";
+  import DirectoryBrowser from "./DirectoryBrowser.svelte";
 
   interface Props {
     open: boolean;
-    workspaceId: string | undefined;
+    workspace: Workspace | undefined;
     serverId: string | undefined;
     onCreate: (input: {
       workspaceId: string;
+      cwd?: string;
       cmd?: string;
       args?: string[];
       env?: Record<string, string>;
       name?: string;
       serverId: string;
     }) => void;
+    onBrowse: (
+      serverId: string,
+      path: string | undefined,
+      q: string | undefined,
+      cursor: string | undefined,
+      workspaceId: string | undefined,
+    ) => Promise<DirectoryListing>;
     onClose: () => void;
+    error?: string;
     profiles?: SessionProfile[];
   }
 
-  let { open, workspaceId, serverId, onCreate, onClose, profiles = [] }: Props = $props();
+  let { open, workspace, serverId, onCreate, onBrowse, onClose, error, profiles = [] }: Props = $props();
+  const registry = useServerRegistry();
 
   let cmd = $state("");
   let argsStr = $state("");
@@ -25,8 +40,23 @@
   // "" is the Custom entry, so opening the dialog never prefills silently.
   let selectedProfileId = $state("");
   let env = $state<Record<string, string> | undefined>(undefined);
+  let cwd = $state("");
+  let browsing = $state(false);
+  let picked = $state<DirectoryEntry | undefined>(undefined);
 
   let envKeys = $derived(env ? Object.keys(env) : []);
+  let serverInfo = $derived(serverId ? registry.get(serverId)?.info : undefined);
+  let support = $derived(runnerSupport(serverInfo));
+  let incompatibility = $derived(serverInfo && support === "incompatible" ? incompatibleServerMessage(serverInfo) : "");
+
+  let workspaceId = $derived(workspace?.id);
+
+  $effect(() => {
+    void open;
+    void workspaceId;
+    cwd = "";
+    browsing = false;
+  });
 
   function selectProfile(id: string) {
     selectedProfileId = id;
@@ -44,11 +74,23 @@
     env = profile.env;
   }
 
+  function browseWorkspace(path: string | undefined, q: string | undefined, cursor: string | undefined) {
+    if (!serverId || !workspace) return Promise.reject(new Error("No workspace selected."));
+    return onBrowse(serverId, path, q, cursor, workspace.id);
+  }
+
+  function usePicked() {
+    if (!picked || !workspace) return;
+    cwd = cwdFieldValue(picked.path, workspace.realpath);
+    browsing = false;
+  }
+
   function handleCreate() {
-    if (!workspaceId || !serverId) return;
+    if (!workspace || !serverId || incompatibility) return;
     const args = parseArgsString(argsStr);
     onCreate({
-      workspaceId,
+      workspaceId: workspace.id,
+      cwd: support === "supported" && cwd.trim() ? cwd.trim() : undefined,
       cmd: cmd || undefined,
       args: args.length > 0 ? args : undefined,
       env: envKeys.length > 0 ? env : undefined,
@@ -94,13 +136,37 @@
         <input type="text" bind:value={name} placeholder="e.g. dev shell" />
       </label>
 
+      {#if support === "supported" && workspace}
+        <div class="directory-field">
+          <label for="new-session-cwd">Directory (optional)</label>
+          <div class="directory-input">
+            <input id="new-session-cwd" type="text" bind:value={cwd} placeholder={workspace.realpath} />
+            <button type="button" class="browse" aria-expanded={browsing} onclick={() => { picked = undefined; browsing = !browsing; }}>Browse</button>
+          </div>
+        </div>
+        {#if browsing}
+          <DirectoryBrowser scoped browse={browseWorkspace} onCurrentChange={(entry) => (picked = entry)} />
+          <div class="browse-actions">
+            <button type="button" class="browse" disabled={!picked} onclick={usePicked}>Use this directory</button>
+          </div>
+        {/if}
+      {/if}
+
       {#if envKeys.length > 0}
         <p class="env-hint">Environment: {envKeys.join(", ")} (from profile)</p>
       {/if}
 
+      {#if incompatibility}
+        <p class="error" role="alert">{incompatibility}</p>
+      {/if}
+
+      {#if error}
+        <p class="error" role="alert">{error}</p>
+      {/if}
+
       <div class="actions">
         <button type="button" class="cancel" onclick={handleCancel}>Cancel</button>
-        <button type="button" class="create" disabled={!workspaceId || !serverId} onclick={handleCreate}>Create</button>
+        <button type="button" class="create" disabled={!workspace || !serverId || incompatibility !== ""} onclick={handleCreate}>Create</button>
       </div>
     </div>
   </div>
@@ -159,10 +225,37 @@
     border-color: var(--accent);
   }
 
+  .directory-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+  }
+
+  .directory-input {
+    display: flex;
+    gap: var(--sp-2);
+  }
+
+  .directory-input input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .browse-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
   .env-hint {
     margin: 0;
     font-size: 0.75rem;
     color: var(--fg-dim);
+  }
+
+  .error {
+    margin: 0;
+    color: #e05252;
+    font-size: 0.85rem;
   }
 
   .actions {
@@ -178,6 +271,16 @@
     border-radius: 3px;
     cursor: pointer;
     font-size: 0.85rem;
+  }
+
+  .browse {
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .browse:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .cancel {

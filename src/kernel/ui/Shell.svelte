@@ -7,6 +7,7 @@
   import { dispatchReservedKeydown } from "../extensibility/keydispatch";
   import type { SessionProfile } from "../../registry/sessionProfiles";
   import { protocolMismatch } from "../transport/protocolVersion";
+  import { incompatibleServerMessage, runnerSupport } from "../../registry/protocolSupport";
   import { buildRailModel } from "./railModel";
   import { activeTerminalClipboard } from "./terminalClipboard";
   import { writeClipboardText } from "../platform/clipboard";
@@ -182,6 +183,10 @@
   );
   let focusedTerminalTitle = $derived(focusedSessionId ? terminalTitles[focusedSessionId] : undefined);
   let focusedServerConfig = $derived(selectedServerId ? serverRegistry.get(selectedServerId)?.config : undefined);
+  let selectedServerInfo = $derived(selectedServerId ? serverRegistry.get(selectedServerId)?.info : undefined);
+  let creationBlocked = $derived(
+    selectedServerInfo && runnerSupport(selectedServerInfo) === "incompatible" ? incompatibleServerMessage(selectedServerInfo) : undefined,
+  );
   let hasProtocolMismatch = $derived(
     clientProtocolVersion !== undefined
     && serverProtocolVersion !== undefined
@@ -266,6 +271,7 @@
         {onNewSession}
         {sessionProfiles}
         {onLaunchProfile}
+        {creationBlocked}
         onClose={() => (sidebarCollapsed = true)}
       />
     {/if}

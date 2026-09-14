@@ -1,6 +1,5 @@
 <script lang="ts">
   import { workspaceColor } from "./workspaceColor";
-  import { basename } from "../../registry/basename";
   import type { ChromeSlotItem } from "../../registry/types";
   import type { buildRailModel } from "./railModel";
 
@@ -41,10 +40,11 @@
         type="button"
         class="workspace-tile {tile.serverId === selectedServerId && tile.workspace.id === selectedWorkspaceId ? 'selected' : ''}"
         style="background: {workspaceColor(tile.workspace.id)}"
-        title={`${basename(tile.workspace.path)} - ${tile.serverLabel}`}
+        title={`${tile.workspace.name}${tile.workspace.kind === "runner" ? " (runner)" : ""} - ${tile.serverLabel}`}
         onclick={() => onSelectWorkspace(tile.serverId, tile.workspace.id)}
       >
-        <span class="tile-char">{basename(tile.workspace.path).charAt(0).toUpperCase()}</span>
+        <span class="tile-char">{tile.workspace.name.charAt(0).toUpperCase()}</span>
+        {#if tile.workspace.kind === "runner"}<span class="tile-kind-badge" aria-hidden="true">&#9654;</span>{/if}
         <span class="tile-status-dot" data-status={tile.status}></span>
       </button>
     {/each}
@@ -108,6 +108,24 @@
   .tile-char {
     position: relative;
     z-index: 1;
+  }
+
+  .tile-kind-badge {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 50%;
+    border: 1.5px solid var(--bg);
+    background: var(--bg-elevated);
+    color: var(--fg);
+    font-size: 0.4rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
   }
 
   .tile-status-dot {

@@ -2,7 +2,6 @@
   import type { Snippet } from "svelte";
   import type { Session, Workspace } from "@pty-server/protocol";
   import SessionList from "../../features/sessions/SessionList.svelte";
-  import { basename } from "../../registry/basename";
   import { defaultSidebarWidth, maxSidebarWidth, minSidebarWidth } from "../storage/sidebarWidthStore";
   import type { ChromeSlotItem, SessionDropPosition } from "../../registry/types";
   import type { SessionProfile } from "../../registry/sessionProfiles";
@@ -26,6 +25,7 @@
     onNewSession: () => void;
     sessionProfiles?: SessionProfile[];
     onLaunchProfile?: (profileId: string) => void;
+    creationBlocked?: string;
     onClose: () => void;
   }
 
@@ -48,6 +48,7 @@
     onNewSession,
     sessionProfiles = [],
     onLaunchProfile,
+    creationBlocked,
     onClose,
   }: Props = $props();
 
@@ -103,17 +104,21 @@
   <div class="sidebar-content">
     {#if selectedWorkspace}
     <div class="sidebar-header">
-      <span class="sidebar-name">{basename(selectedWorkspace.path)}</span>
+      <span class="sidebar-name">
+        {selectedWorkspace.name}
+        {#if selectedWorkspace.kind === "runner"}<span class="sidebar-kind">runner</span>{/if}
+      </span>
       <span class="sidebar-path">{selectedWorkspace.realpath}</span>
     </div>
     <SessionList sessions={mainSessions} {terminalTitles} {sessionExtra} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} onReorder={onReorderSession} />
-    <div class="new-session-control">
-      <button type="button" class="new-session" onclick={() => { showNewSessionMenu = false; onStartDefaultSession(); }}>New session</button>
+    <div class="new-session-control" title={creationBlocked}>
+      <button type="button" class="new-session" disabled={creationBlocked !== undefined} onclick={() => { showNewSessionMenu = false; onStartDefaultSession(); }}>New session</button>
       <button
         type="button"
         class="new-session-menu-toggle"
         aria-label="New session options"
         aria-expanded={showNewSessionMenu}
+        disabled={creationBlocked !== undefined}
         onclick={(event) => { event.stopPropagation(); showNewSessionMenu = !showNewSessionMenu; }}
       >
         &#9662;
@@ -211,6 +216,23 @@
     font-weight: 700;
     font-size: 0.95rem;
     color: var(--fg);
+  }
+
+  .sidebar-kind {
+    margin-left: var(--sp-1);
+    padding: 0 var(--sp-1);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--fg-dim);
+    vertical-align: middle;
+  }
+
+  .new-session:disabled,
+  .new-session-menu-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .sidebar-path {

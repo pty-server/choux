@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { PROTOCOL_VERSION, type DirectoryListing, type Session } from "@pty-server/protocol";
+  import { PROTOCOL_VERSION, type DirectoryListing, type Session, type WorkspaceKind } from "@pty-server/protocol";
   import { createApiClient, describeConnectionFailure } from "./kernel/transport/api";
   import { createServerRegistry } from "./kernel/servers/serverRegistry.svelte";
+  import { gateSessionRequest, gateWorkspaceRequest } from "./kernel/servers/creationRequests";
+  import { openHomeProject } from "./kernel/servers/localAutostart";
   import Shell from "./kernel/ui/Shell.svelte";
   import AttachPane from "./kernel/ui/AttachPane.svelte";
   import NewSessionDialog from "./features/sessions/NewSessionDialog.svelte";
@@ -11,7 +13,7 @@
   import { tokenStore } from "./kernel/storage/serverConfigStore";
   import { serverUsesToken } from "./kernel/storage/serverConfigStore";
   import { initializeTokenStore } from "./kernel/storage/tokenStore";
-  import { getLocalServerBridge, localServerEndpoint, type LocalServerTool } from "./kernel/platform/localServer";
+  import { getLocalServerBridge, localServerEndpoint, type LocalServerBridge, type LocalServerTool } from "./kernel/platform/localServer";
   import { listenForSessionDeepLinks, type SessionDeepLink } from "./kernel/platform/deepLink";
   import { writeClipboardText } from "./kernel/platform/clipboard";
   import { openExternalUrl } from "./kernel/platform/openUrl";
@@ -55,6 +57,7 @@
   let defaultServerId = $derived(registry.defaultServerId);
   let conn = $derived(selectedServerId ? registry.get(selectedServerId) : undefined);
   let workspaces = $derived(conn?.workspaces ?? []);
+  let selectedWorkspace = $derived(workspaces.find((workspace) => workspace.id === selectedWorkspaceId));
   let sessions = $derived(conn?.sessions ?? []);
   let terminalTitles = $derived(conn?.terminalTitles ?? {});
   let focusedSessionWorkspaceId = $derived(sessions.find((session) => session.id === focusedSessionId)?.workspaceId ?? selectedWorkspaceId);
@@ -74,6 +77,7 @@
   let selectedServerId = $state<string | undefined>(undefined);
   let selectedWorkspaceId = $state<string | undefined>(undefined);
   let showNewSessionDialog = $state(false);
+  let newSessionError = $state("");
   let sessionToRename = $state<Session | undefined>(undefined);
   let showAddWorkspaceDialog = $state(false);
   let addWorkspaceError = $state("");
@@ -205,38 +209,53 @@
     else clearError("token");
   });
 
+  let newSessionDialogGeneration = 0;
+
   function handleCreate(input: {
     workspaceId?: string;
+    cwd?: string;
     cmd?: string;
     args?: string[];
     env?: Record<string, string>;
     name?: string;
     serverId: string;
-  }) {
+  }, dialogGeneration: number | undefined = undefined) {
     const targetConn = registry.get(input.serverId);
     if (!targetConn || !mainContainer) return;
     const { cols, rows } = measureViewport(mainContainer);
+    const reportCreateError = (message: string) => {
+      const fromOpenDialog = showNewSessionDialog && dialogGeneration === newSessionDialogGeneration;
+      if (fromOpenDialog) newSessionError = message;
+      else showError(message, "session-create");
+    };
+    const gated = gateSessionRequest({
+      workspaceId: input.workspaceId,
+      cwd: input.cwd,
+      cmd: input.cmd,
+      args: input.args,
+      env: input.env,
+      cols,
+      rows,
+      name: input.name,
+    }, targetConn.info);
+    if ("refusal" in gated) {
+      reportCreateError(gated.refusal);
+      return;
+    }
     getServerToken(targetConn.config).then((token) => {
       if (serverUsesToken(targetConn.config) && !token) {
-        showError("No saved token for the selected server.", "session-create");
+        reportCreateError("No saved token for the selected server.");
         return undefined;
       }
-      return apiFor(targetConn.config, token).createSession({
-        workspaceId: input.workspaceId,
-        cmd: input.cmd,
-        args: input.args,
-        env: input.env,
-        cols,
-        rows,
-        name: input.name,
-      }).then((session) => {
+      return apiFor(targetConn.config, token).createSession(gated.body).then((session) => {
         focusSession(input.serverId, session.id, session.workspaceId);
         showNewSessionDialog = false;
+        newSessionError = "";
         clearError("session-create");
         registry.refresh(input.serverId);
       });
     }).catch((err) => {
-      showError(err instanceof Error ? err.message : String(err), "session-create");
+      reportCreateError(err instanceof Error ? err.message : String(err));
     });
   }
 
@@ -333,16 +352,21 @@
     }).catch(() => {});
   }
 
-  async function handleAddWorkspace(path: string, serverId: string) {
+  async function handleAddWorkspace(request: { path: string; kind: WorkspaceKind; name?: string }, serverId: string) {
     const targetConn = registry.get(serverId);
     if (!targetConn) return;
+    const gated = gateWorkspaceRequest(request, targetConn.info);
+    if ("refusal" in gated) {
+      addWorkspaceError = gated.refusal;
+      return;
+    }
     try {
       const token = await getServerToken(targetConn.config);
       if (serverUsesToken(targetConn.config) && !token) {
         addWorkspaceError = "No saved token for the selected server.";
         return;
       }
-      const workspace = await apiFor(targetConn.config, token).createWorkspace(path);
+      const workspace = await apiFor(targetConn.config, token).createWorkspace(gated.body);
       selectedServerId = serverId;
       selectedWorkspaceId = workspace.id;
       showAddWorkspaceDialog = false;
@@ -358,12 +382,13 @@
     path: string | undefined = undefined,
     q: string | undefined = undefined,
     cursor: string | undefined = undefined,
+    workspaceId: string | undefined = undefined,
   ): Promise<DirectoryListing> {
     const targetConn = registry.get(serverId);
     if (!targetConn) throw new Error("Selected server is unavailable.");
     const token = await getServerToken(targetConn.config);
     if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
-    return apiFor(targetConn.config, token).listDirectories(path, q, cursor);
+    return apiFor(targetConn.config, token).listDirectories(path, q, cursor, workspaceId);
   }
 
   function apiFor(config: import("./kernel/storage/serverConfigStore").ServerConfig, token: string | undefined) {
@@ -453,7 +478,7 @@
           return config?.transport === "local" && config.instance !== undefined && !knownInstances.has(config.instance);
         });
         if (startedServerId) {
-          startDefaultSession(startedServerId, undefined);
+          await openLocalHomeProject(startedServerId, bridge);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -461,6 +486,22 @@
       localServerMessage = "ptys started, but Choux could not connect yet. Retry in a moment.";
     } catch (err) { localServerMessage = err instanceof Error ? err.message : String(err); }
     finally { localServerBusy = false; }
+  }
+
+  async function openLocalHomeProject(serverId: string, bridge: LocalServerBridge): Promise<void> {
+    const config = registry.get(serverId)?.config;
+    if (!config) return;
+    const api = apiFor(config, undefined);
+    try {
+      await openHomeProject({
+        getInfo: api.getInfo,
+        home: bridge.home,
+        createWorkspace: api.createWorkspace,
+        startSession: (workspaceId) => startDefaultSession(serverId, workspaceId),
+      });
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "session-create");
+    }
   }
 
   async function handleSaveTerminalSettings(settings: TerminalSettings): Promise<void> {
@@ -520,7 +561,7 @@
     onRenameSession={(session) => sessionToRename = session}
     onRemoveSession={(session) => void handleRemoveSession(session)}
     onStartDefaultSession={handleStartDefaultSession}
-    onNewSession={() => showNewSessionDialog = true}
+    onNewSession={() => { newSessionError = ""; newSessionDialogGeneration += 1; showNewSessionDialog = true; }}
     onAddWorkspace={openAddWorkspaceDialog}
     sessionProfiles={sessionProfiles.profiles}
     onLaunchProfile={handleLaunchProfile}
@@ -586,10 +627,12 @@
   {/if}
   <NewSessionDialog
     open={showNewSessionDialog}
-    workspaceId={selectedWorkspaceId}
+    workspace={selectedWorkspace}
     serverId={selectedServerId}
     onClose={() => showNewSessionDialog = false}
-    onCreate={handleCreate}
+    onCreate={(input) => handleCreate(input, newSessionDialogGeneration)}
+    onBrowse={browseDirectories}
+    error={newSessionError}
     profiles={sessionProfiles.profiles}
   />
   <RenameSessionDialog

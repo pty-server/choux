@@ -56,7 +56,7 @@ async function boot(extraFlags = []) {
   const { createApiClient } = await import("../src/kernel/transport/api.ts");
   const client = createApiClient({ baseUrl: handle.baseUrl, token, headers: { Origin: origin } });
   const cwd = mkdtempSync(join(tmpdir(), "ptys-exec-session-workspace-"));
-  const workspace = await client.createWorkspace(cwd);
+  const workspace = await client.createWorkspace({ path: cwd });
   return { handle, client, workspaceId: workspace.id, cwd };
 }
 

@@ -653,6 +653,11 @@ fn local_server_start() -> LocalServerCommandResult {
     }
 }
 
+#[tauri::command(async)]
+fn local_server_home() -> Option<String> {
+    home_dir().and_then(|home| home.into_os_string().into_string().ok())
+}
+
 #[cfg(unix)]
 #[tauri::command(async)]
 fn local_server_request(
@@ -1010,6 +1015,7 @@ pub fn run() {
             local_server_tool,
             local_server_install,
             local_server_start,
+            local_server_home,
             local_server_request,
             local_socket_open,
             local_socket_send,

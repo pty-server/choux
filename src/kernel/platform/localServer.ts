@@ -23,6 +23,7 @@ export interface LocalServerBridge {
   tool(): Promise<LocalServerTool>;
   install(): Promise<LocalServerCommandResult>;
   start(): Promise<LocalServerCommandResult>;
+  home(): Promise<string | undefined>;
 }
 
 function normalizeResult(value: LocalServerCommandResult): LocalServerCommandResult {
@@ -39,6 +40,7 @@ export async function getLocalServerBridge(): Promise<LocalServerBridge | undefi
     tool: () => call<LocalServerTool>("local_server_tool"),
     install: async () => normalizeResult(await call<LocalServerCommandResult>("local_server_install")),
     start: async () => normalizeResult(await call<LocalServerCommandResult>("local_server_start")),
+    home: async () => (await call<string | null>("local_server_home")) ?? undefined,
   };
 }
 
