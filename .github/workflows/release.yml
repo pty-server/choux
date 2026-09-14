@@ -100,6 +100,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev build-essential pkg-config libssl-dev libxdo-dev patchelf
 
+      - name: Check updater signing secrets are present
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          missing=""
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secrets:$missing"
+            exit 1
+          fi
+
       - name: Check signing secrets are present
         if: runner.os == 'macOS'
         env:
@@ -143,12 +157,15 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
       # The dmg bundler folds the .app into the disk image and then deletes it,
-      # so the shipped app can only be verified from inside the mounted dmg.
+      # so the shipped app can only be verified from inside the mounted dmg and
+      # the updater archive.
       - name: Locate a single aarch64 DMG
         if: runner.os == 'macOS'
         run: |
@@ -181,39 +198,88 @@ jobs:
           echo "${apps[0]}"
           echo "APP_PATH=${apps[0]}" >> "$GITHUB_ENV"
 
+      - name: Unpack the updater archive
+        if: runner.os == 'macOS'
+        run: |
+          shopt -s nullglob
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          archives=("$bundle"/macos/*.app.tar.gz)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one updater archive, found ${#archives[@]}"
+            exit 1
+          fi
+          if [ ! -s "${archives[0]}.sig" ]; then
+            echo "::error::${archives[0]} has no signature"
+            exit 1
+          fi
+          unpacked="$RUNNER_TEMP/updater"
+          mkdir -p "$unpacked"
+          tar -xzf "${archives[0]}" -C "$unpacked"
+          apps=("$unpacked"/*.app)
+          if [ "${#apps[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .app in ${archives[0]}, found ${#apps[@]}"
+            exit 1
+          fi
+          echo "${apps[0]}"
+          echo "UPDATER_APP_PATH=${apps[0]}" >> "$GITHUB_ENV"
+
       - name: Verify code signature
         if: runner.os == 'macOS'
         run: |
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          codesign --display --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Authority|TeamIdentifier'
+          for app in "$APP_PATH" "$UPDATER_APP_PATH"; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign --display --verbose=4 "$app" 2>&1 | grep -E 'Authority|TeamIdentifier'
+          done
 
       - name: Verify signing team
         if: runner.os == 'macOS'
         run: |
-          got="$(codesign --display --verbose=4 "$APP_PATH" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
-          if [ "$got" != "$TEAM_ID" ]; then
-            echo "::error::signed by team $got, expected $TEAM_ID"
-            exit 1
-          fi
-          echo "$got"
+          for app in "$APP_PATH" "$UPDATER_APP_PATH"; do
+            got="$(codesign --display --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+            if [ "$got" != "$TEAM_ID" ]; then
+              echo "::error::$app signed by team $got, expected $TEAM_ID"
+              exit 1
+            fi
+            echo "$app: $got"
+          done
 
       - name: Verify Gatekeeper acceptance
         if: runner.os == 'macOS'
-        run: spctl --assess --type execute --verbose=4 "$APP_PATH"
+        run: |
+          for app in "$APP_PATH" "$UPDATER_APP_PATH"; do
+            spctl --assess --type execute --verbose=4 "$app"
+          done
 
       - name: Verify notarization ticket
         if: runner.os == 'macOS'
-        run: xcrun stapler validate "$APP_PATH"
+        run: |
+          for app in "$APP_PATH" "$UPDATER_APP_PATH"; do
+            xcrun stapler validate "$app"
+          done
 
       - name: Verify bundle identifier
         if: runner.os == 'macOS'
         run: |
-          got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")"
-          if [ "$got" != "$BUNDLE_ID" ]; then
-            echo "::error::bundle identifier is $got, expected $BUNDLE_ID"
+          for app in "$APP_PATH" "$UPDATER_APP_PATH"; do
+            got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
+            if [ "$got" != "$BUNDLE_ID" ]; then
+              echo "::error::$app bundle identifier is $got, expected $BUNDLE_ID"
+              exit 1
+            fi
+            echo "$app: $got"
+          done
+
+      - name: Verify the updater archive holds the dmg build
+        if: runner.os == 'macOS'
+        run: |
+          cdhash() { codesign --display --verbose=4 "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
+          dmg="$(cdhash "$APP_PATH")"
+          updater="$(cdhash "$UPDATER_APP_PATH")"
+          if [ -z "$dmg" ] || [ "$dmg" != "$updater" ]; then
+            echo "::error::updater app CDHash '$updater' does not match dmg app '$dmg'"
             exit 1
           fi
-          echo "$got"
+          echo "$dmg"
 
       - name: Unmount the DMG
         if: always() && runner.os == 'macOS' && env.MOUNT_POINT != ''
@@ -242,5 +308,47 @@ jobs:
           done
           if [ -n "$missing" ]; then
             echo "::error::draft release is missing:$missing"
+            exit 1
+          fi
+
+      - name: Check the updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
+            -q '.[] | select(.name == "latest.json") | .id')"
+          if [ -z "$asset_id" ]; then
+            echo "::error::draft release is missing latest.json"
+            exit 1
+          fi
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > latest.json
+          jq . latest.json
+          announced="$(jq -r .version latest.json)"
+          if [ "$announced" != "$version" ]; then
+            echo "::error::latest.json announces $announced, expected $version"
+            exit 1
+          fi
+          missing=""
+          for targets in "darwin-aarch64-app darwin-aarch64" \
+                         "linux-x86_64-appimage linux-x86_64" \
+                         "linux-x86_64-deb"; do
+            found=""
+            for target in $targets; do
+              if jq -e --arg target "$target" \
+                '.platforms[$target] | select((.url // "") != "" and (.signature // "") != "")' \
+                latest.json > /dev/null; then
+                found="$target"
+                break
+              fi
+            done
+            [ -n "$found" ] || missing="$missing ${targets%% *}"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::latest.json has no signed update for:$missing"
             exit 1
           fi
