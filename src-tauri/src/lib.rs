@@ -8,8 +8,6 @@ use std::{
 #[cfg(unix)]
 use std::{
     collections::HashMap,
-    io::{Read, Write},
-    os::unix::net::UnixStream,
     sync::{
         atomic::{AtomicU64, Ordering},
         Mutex,
@@ -41,8 +39,14 @@ use tokio_tungstenite::{
 };
 
 mod locale;
+mod transport;
 
 use locale::user_locale;
+#[cfg(unix)]
+use transport::{
+    http::{HttpConnection, Request},
+    Endpoint,
+};
 
 const TOKEN_SERVICE: &str = "ptys-choux";
 #[cfg(unix)]
@@ -318,123 +322,51 @@ struct LocalSocketHub {
 }
 
 #[cfg(unix)]
-fn decode_chunked(body: &[u8]) -> Result<Vec<u8>, String> {
-    let mut rest = body;
-    let mut decoded = Vec::new();
-    loop {
-        let Some(line_end) = rest.windows(2).position(|window| window == b"\r\n") else {
-            return Err("invalid chunked response".into());
-        };
-        let size = std::str::from_utf8(&rest[..line_end])
-            .map_err(|_| "invalid chunk size")?
-            .split(';')
-            .next()
-            .unwrap_or_default();
-        let size = usize::from_str_radix(size.trim(), 16).map_err(|_| "invalid chunk size")?;
-        rest = &rest[line_end + 2..];
-        if size == 0 {
-            return Ok(decoded);
-        }
-        if rest.len() < size + 2 {
-            return Err("truncated chunked response".into());
-        }
-        decoded.extend_from_slice(&rest[..size]);
-        if &rest[size..size + 2] != b"\r\n" {
-            return Err("invalid chunk delimiter".into());
-        }
-        rest = &rest[size + 2..];
-    }
-}
-
-#[cfg(unix)]
-fn unix_http_request(
-    socket_path: &str,
+async fn local_http_request(
+    endpoint: &Endpoint,
     path: &str,
     method: &str,
     headers: &HashMap<String, String>,
     body: Option<&str>,
 ) -> Result<LocalHttpResponse, String> {
-    if !path.starts_with('/') || path.contains('\r') || path.contains('\n') {
-        return Err("invalid local ptys request path".into());
-    }
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|error| format!("could not connect to local ptys: {error}"))?;
-    stream
-        .set_read_timeout(Some(LOCAL_REQUEST_TIMEOUT))
-        .and_then(|_| stream.set_write_timeout(Some(LOCAL_REQUEST_TIMEOUT)))
-        .map_err(|error| format!("could not configure the local ptys socket: {error}"))?;
-    let payload = body.unwrap_or("");
-    let mut request =
-        format!("{method} {path} HTTP/1.1\r\nHost: ptys.local\r\nConnection: close\r\n");
-    for (name, value) in headers {
-        if name.contains('\r')
-            || name.contains('\n')
-            || value.contains('\r')
-            || value.contains('\n')
-        {
-            return Err("invalid local ptys request header".into());
-        }
-        request.push_str(name);
-        request.push_str(": ");
-        request.push_str(value);
-        request.push_str("\r\n");
-    }
-    if body.is_some() {
-        request.push_str(&format!("Content-Length: {}\r\n", payload.len()));
-    }
-    request.push_str("\r\n");
-    stream
-        .write_all(request.as_bytes())
-        .and_then(|_| stream.write_all(payload.as_bytes()))
-        .map_err(|error| format!("could not write to local ptys: {error}"))?;
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).map_err(|error| {
-        if matches!(
-            error.kind(),
-            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-        ) {
+    let request = Request {
+        method,
+        path,
+        host: "ptys.local",
+        headers,
+        body: body.map(str::as_bytes),
+        keep_alive: false,
+    };
+    let exchange = async {
+        let stream = endpoint
+            .connect()
+            .await
+            .map_err(|error| format!("could not connect to local ptys: {error}"))?;
+        HttpConnection::new(stream)
+            .send(&request)
+            .await
+            .map_err(|error| format!("local ptys request failed: {error}"))
+    };
+    let response = tokio::time::timeout(LOCAL_REQUEST_TIMEOUT, exchange)
+        .await
+        .map_err(|_| {
             format!(
                 "local ptys did not respond within {}s",
                 LOCAL_REQUEST_TIMEOUT.as_secs()
             )
-        } else {
-            format!("could not read from local ptys: {error}")
-        }
-    })?;
-    let Some(headers_end) = raw.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err("invalid HTTP response from local ptys".into());
-    };
-    let header_text = std::str::from_utf8(&raw[..headers_end])
-        .map_err(|_| "invalid HTTP headers from local ptys")?;
-    let mut lines = header_text.split("\r\n");
-    let status_line = lines.next().ok_or("missing HTTP status from local ptys")?;
-    let mut status_parts = status_line.splitn(3, ' ');
-    let _http = status_parts.next();
-    let status = status_parts
-        .next()
-        .ok_or("missing HTTP status code")?
-        .parse::<u16>()
-        .map_err(|_| "invalid HTTP status code")?;
-    let status_text = status_parts.next().unwrap_or_default().to_owned();
-    let chunked = lines.any(|line| {
-        line.to_ascii_lowercase().starts_with("transfer-encoding:")
-            && line.to_ascii_lowercase().contains("chunked")
-    });
-    let response_body = if chunked {
-        decode_chunked(&raw[headers_end + 4..])?
-    } else {
-        raw[headers_end + 4..].to_vec()
-    };
+        })??;
     Ok(LocalHttpResponse {
-        status,
-        status_text,
-        body: String::from_utf8_lossy(&response_body).into_owned(),
+        status: response.status,
+        status_text: response.reason,
+        body: String::from_utf8_lossy(&response.body).into_owned(),
     })
 }
 
 #[cfg(unix)]
-fn local_daemon_matches(socket_path: &str, pid: u32) -> bool {
-    let Ok(response) = unix_http_request(socket_path, "/v1/daemon", "GET", &HashMap::new(), None)
+async fn local_daemon_matches(socket_path: &str, pid: u32) -> bool {
+    let endpoint = Endpoint::UnixSocket(socket_path.into());
+    let Ok(response) =
+        local_http_request(&endpoint, "/v1/daemon", "GET", &HashMap::new(), None).await
     else {
         return false;
     };
@@ -446,12 +378,12 @@ fn local_daemon_matches(socket_path: &str, pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-fn local_daemon_matches(_socket_path: &str, _pid: u32) -> bool {
+async fn local_daemon_matches(_socket_path: &str, _pid: u32) -> bool {
     false
 }
 
 #[cfg(unix)]
-fn local_socket_for_instance(instance: &str) -> Result<String, String> {
+async fn local_socket_for_instance(instance: &str) -> Result<Endpoint, String> {
     let valid_instance = !instance.is_empty()
         && instance.len() <= 64
         && instance.bytes().enumerate().all(|(index, byte)| {
@@ -476,15 +408,15 @@ fn local_socket_for_instance(instance: &str) -> Result<String, String> {
         .get("controlSocketPath")
         .and_then(serde_json::Value::as_str)
         .ok_or("This ptys daemon does not expose a control socket; upgrade ptys and restart it.")?;
-    if !process_alive(pid as u32) || !local_daemon_matches(socket_path, pid as u32) {
+    if !process_alive(pid as u32) || !local_daemon_matches(socket_path, pid as u32).await {
         return Err(format!(
             "No live local ptys daemon is running as instance {instance}."
         ));
     }
-    Ok(socket_path.to_owned())
+    Ok(Endpoint::UnixSocket(socket_path.into()))
 }
 
-fn local_server_candidate(value: &serde_json::Value) -> Option<LocalServerCandidate> {
+async fn local_server_candidate(value: &serde_json::Value) -> Option<LocalServerCandidate> {
     let instance = value.get("instance")?.as_str()?.to_owned();
     let pid = value.get("pid")?.as_u64()?;
     let socket_path = value.get("controlSocketPath")?.as_str()?;
@@ -507,11 +439,11 @@ fn local_server_candidate(value: &serde_json::Value) -> Option<LocalServerCandid
         && pid > 0
         && pid <= u32::MAX as u64
         && process_alive(pid as u32)
-        && local_daemon_matches(socket_path, pid as u32))
-    .then_some(LocalServerCandidate {
-        instance,
-        listen: (!listen.is_empty()).then_some(listen),
-    })
+        && local_daemon_matches(socket_path, pid as u32).await)
+        .then_some(LocalServerCandidate {
+            instance,
+            listen: (!listen.is_empty()).then_some(listen),
+        })
 }
 
 #[cfg(test)]
@@ -528,26 +460,85 @@ mod local_server_candidate_tests {
         })
     }
 
-    #[test]
-    fn rejects_a_pidfile_without_a_live_control_socket() {
-        assert!(local_server_candidate(&pidfile()).is_none());
+    #[tokio::test]
+    async fn rejects_a_pidfile_without_a_live_control_socket() {
+        assert!(local_server_candidate(&pidfile()).await.is_none());
     }
 
-    #[test]
-    fn rejects_legacy_host_port_metadata() {
-        assert!(local_server_candidate(&json!({ "host": "127.0.0.1", "port": 7801 })).is_none());
+    #[tokio::test]
+    async fn rejects_legacy_host_port_metadata() {
+        assert!(
+            local_server_candidate(&json!({ "host": "127.0.0.1", "port": 7801 }))
+                .await
+                .is_none()
+        );
     }
 }
 
-#[tauri::command(async)]
-fn local_server_candidates() -> Vec<LocalServerCandidate> {
+#[cfg(all(test, unix))]
+mod local_http_tests {
+    use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::UnixListener,
+    };
+
+    #[tokio::test]
+    async fn requests_over_a_unix_socket_without_waiting_for_the_close() {
+        let dir = env::temp_dir().join(format!("choux-local-http-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let socket_path = dir.join("ptys.sock");
+        let _ = fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n7\r\n{\"pid\":\r\n3\r\n42}\r\n0\r\n\r\n")
+                .await
+                .unwrap();
+            (String::from_utf8(request).unwrap(), stream)
+        });
+
+        let response = local_http_request(
+            &Endpoint::UnixSocket(socket_path),
+            "/v1/daemon",
+            "GET",
+            &HashMap::new(),
+            None,
+        )
+        .await
+        .unwrap();
+        let (request, _open_stream) = server.await.unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(
+            request,
+            "GET /v1/daemon HTTP/1.1\r\nHost: ptys.local\r\nConnection: close\r\n\r\n"
+        );
+        assert_eq!(
+            (
+                response.status,
+                response.status_text.as_str(),
+                response.body.as_str()
+            ),
+            (200, "OK", "{\"pid\":42}")
+        );
+    }
+}
+
+#[tauri::command]
+async fn local_server_candidates() -> Vec<LocalServerCandidate> {
     let Some(run_dir) = ptys_dir().map(|path| path.join("run")) else {
         return Vec::new();
     };
     let Ok(entries) = fs::read_dir(run_dir) else {
         return Vec::new();
     };
-    entries
+    let pidfiles: Vec<serde_json::Value> = entries
         .flatten()
         .filter(|entry| {
             entry
@@ -556,9 +547,13 @@ fn local_server_candidates() -> Vec<LocalServerCandidate> {
                 .is_some_and(|extension| extension == "pid")
         })
         .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .filter_map(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .filter_map(|value| local_server_candidate(&value))
-        .collect()
+        .filter_map(|text| serde_json::from_str(&text).ok())
+        .collect();
+    let mut candidates = Vec::new();
+    for pidfile in &pidfiles {
+        candidates.extend(local_server_candidate(pidfile).await);
+    }
+    candidates
 }
 
 #[tauri::command(async)]
@@ -659,22 +654,23 @@ fn local_server_home() -> Option<String> {
 }
 
 #[cfg(unix)]
-#[tauri::command(async)]
-fn local_server_request(
+#[tauri::command]
+async fn local_server_request(
     instance: String,
     path: String,
     method: Option<String>,
     headers: Option<HashMap<String, String>>,
     body: Option<String>,
 ) -> Result<LocalHttpResponse, String> {
-    let socket_path = local_socket_for_instance(&instance)?;
-    unix_http_request(
-        &socket_path,
+    let endpoint = local_socket_for_instance(&instance).await?;
+    local_http_request(
+        &endpoint,
         &path,
         method.as_deref().unwrap_or("GET"),
         &headers.unwrap_or_default(),
         body.as_deref(),
     )
+    .await
 }
 
 #[cfg(unix)]
@@ -690,7 +686,7 @@ async fn local_socket_open(
     if !path.starts_with('/') {
         return Err("invalid local ptys WebSocket path".into());
     }
-    let socket_path = local_socket_for_instance(&instance)?;
+    let endpoint = local_socket_for_instance(&instance).await?;
     let connection_id = format!("local-{}", hub.next_id.fetch_add(1, Ordering::Relaxed));
     let (sender, mut receiver) = mpsc::unbounded_channel::<Message>();
     hub.senders
@@ -700,7 +696,7 @@ async fn local_socket_open(
     let task_connection_id = connection_id.clone();
     tauri::async_runtime::spawn(async move {
         let result: Result<(), String> = async {
-            let stream = tokio::net::UnixStream::connect(socket_path).await.map_err(|error| error.to_string())?;
+            let stream = endpoint.connect().await.map_err(|error| error.to_string())?;
             let mut request = format!("ws://{instance}.ptys.local{path}").into_client_request().map_err(|error| error.to_string())?;
             if !protocols.is_empty() {
                 request.headers_mut().insert("Sec-WebSocket-Protocol", protocols.join(", ").parse().map_err(|_| "invalid WebSocket protocol")?);
