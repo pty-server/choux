@@ -67,7 +67,7 @@
   let resolvedCredential = $state<ResolvedCredential | undefined>(undefined);
   let resolvedToken = $derived(credentialFor(resolvedCredential, conn?.config));
   let hasServers = $derived(registry.servers.length > 0);
-  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "session-control" | "deep-link" | "local-discovery";
+  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "session-control" | "workspace-close" | "deep-link" | "local-discovery";
 
   let error = $state("");
   let errorSource = $state<ErrorSource | undefined>(undefined);
@@ -421,6 +421,22 @@
     }
   }
 
+  async function handleCloseWorkspace(serverId: string, workspaceId: string): Promise<void> {
+    const targetConn = registry.get(serverId);
+    if (!targetConn) return;
+    try {
+      const token = await getServerToken(targetConn.config);
+      if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
+      await apiFor(targetConn.config, token).deleteWorkspace(workspaceId);
+      if (selectedServerId === serverId && sessions.some((session) => session.id === focusedSessionId && session.workspaceId === workspaceId)) {
+        focusedSessionId = undefined;
+      }
+      registry.refresh(serverId);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "workspace-close");
+    }
+  }
+
   async function browseDirectories(
     serverId: string,
     path: string | undefined = undefined,
@@ -610,6 +626,7 @@
     onStartDefaultSession={handleStartDefaultSession}
     onNewSession={() => { newSessionError = ""; newSessionDialogGeneration += 1; showNewSessionDialog = true; }}
     onAddWorkspace={openAddWorkspaceDialog}
+    onCloseWorkspace={(serverId, workspaceId) => void handleCloseWorkspace(serverId, workspaceId)}
     sessionProfiles={sessionProfiles.profiles}
     onLaunchProfile={handleLaunchProfile}
     {settingsOpen}

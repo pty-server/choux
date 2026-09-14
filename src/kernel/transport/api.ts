@@ -137,6 +137,7 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
       `/v1/sessions${workspaceId === undefined ? "" : `?workspaceId=${encodeURIComponent(workspaceId)}`}`,
     ),
     createWorkspace: async (body: CreateWorkspaceRequest) => normalizeWorkspace(await requestJson<LegacyWorkspace>("/v1/workspaces", body)),
+    deleteWorkspace: (id: string) => requestEmpty(`/v1/workspaces/${encodeURIComponent(id)}`, "DELETE"),
     createSession: (body: CreateSessionBody) => requestJson<Session>("/v1/sessions", body),
     updateSession: (id: string, name: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { name }, "PATCH"),
     deleteSession: (id: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}`, "DELETE"),

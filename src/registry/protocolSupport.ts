@@ -13,6 +13,10 @@ export function runnerSupport(info: ProtocolInfo | undefined): FeatureSupport | 
   return info === undefined ? undefined : featureSupport(serverProtocolLevel(info), "runners");
 }
 
+export function workspaceDeleteSupport(info: ProtocolInfo | undefined): FeatureSupport | undefined {
+  return info === undefined ? undefined : featureSupport(serverProtocolLevel(info), "workspaceDelete");
+}
+
 export function incompatibleServerMessage(info: ProtocolInfo): string {
   const server = serverProtocolLevel(info);
   const upgrade = server.major > PROTOCOL_VERSION ? "Upgrade Choux." : "Upgrade ptys on the server.";

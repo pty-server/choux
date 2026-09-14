@@ -46,6 +46,7 @@
     onStartDefaultSession: () => void;
     onNewSession: () => void;
     onAddWorkspace: () => void;
+    onCloseWorkspace?: (serverId: string, workspaceId: string) => void;
     sessionProfiles?: SessionProfile[];
     onLaunchProfile?: (profileId: string) => void;
     settingsOpen: boolean;
@@ -78,6 +79,7 @@
     onStartDefaultSession,
     onNewSession,
     onAddWorkspace,
+    onCloseWorkspace,
     sessionProfiles = [],
     onLaunchProfile,
     settingsOpen,
@@ -265,6 +267,7 @@
         railItems={registry.railItems}
         {onSelectWorkspace}
         {onAddWorkspace}
+        {onCloseWorkspace}
         onClose={() => void toggleRail()}
       />
     {/if}

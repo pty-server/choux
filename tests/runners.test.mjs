@@ -168,6 +168,22 @@ test("restarting a running runner session replaces it with an identical one", as
   assert.deepEqual((await shared.client.getSessions(runner.id)).map((candidate) => candidate.id), [replacement.id]);
 });
 
+test("closing a workspace is refused while a session runs and takes its exited sessions along", async () => {
+  const runner = await shared.client.createWorkspace({ path: tempDirectory("choux-runners-root-"), kind: "runner" });
+  const session = await shared.client.createSession(sessionBody(runner.id));
+
+  await assert.rejects(shared.client.deleteWorkspace(runner.id), (error) => error.status === 409);
+
+  await shared.client.signalSession(session.id, "SIGKILL");
+  await waitFor(async () => (await shared.client.getSessions(runner.id))
+    .find((candidate) => candidate.id === session.id && candidate.exited !== undefined));
+  await shared.client.deleteWorkspace(runner.id);
+
+  assert.ok(!(await shared.client.getWorkspaces()).some((workspace) => workspace.id === runner.id));
+  assert.ok(!(await shared.client.getSessions()).some((candidate) => candidate.id === session.id));
+  await assert.rejects(shared.client.deleteWorkspace(runner.id), (error) => error.status === 404);
+});
+
 test("local autostart opens exactly one home project with one session on a fresh server", async () => {
   const fresh = await boot();
   let created;

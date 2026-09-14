@@ -1,4 +1,5 @@
 import type { Workspace } from "@pty-server/protocol";
+import { workspaceDeleteSupport } from "../../registry/protocolSupport";
 import type { ServerConn, ServerStatus } from "../../registry/types";
 
 export type TileStatus = "online" | "warn" | "offline";
@@ -10,6 +11,7 @@ export interface RailTile {
   serverLabel: string;
   accent: string;
   status: TileStatus;
+  closeBlocker: string | undefined;
 }
 
 export interface RailGroup {
@@ -29,6 +31,15 @@ export function tileStatus(status: ServerStatus): TileStatus {
   return "offline";
 }
 
+export function workspaceCloseBlocker(server: ServerConn, workspace: Workspace): string | undefined {
+  if (server.status !== "online") return "The server is not connected.";
+  if (workspaceDeleteSupport(server.info) !== "supported") return "Upgrade ptys on the server to close workspaces.";
+  if (server.sessions.some((session) => session.workspaceId === workspace.id && session.exited === undefined)) {
+    return "Stop its running sessions first.";
+  }
+  return undefined;
+}
+
 export function buildRailModel(servers: ServerConn[]): RailModel {
   const groups = servers.flatMap((server) => {
     if (server.workspaces.length === 0) return [];
@@ -40,6 +51,7 @@ export function buildRailModel(servers: ServerConn[]): RailModel {
       serverLabel: server.config.label,
       accent: server.config.accent,
       status: tileStatus(server.status),
+      closeBlocker: workspaceCloseBlocker(server, workspace),
     });
     const tiles = server.workspaces.filter((workspace) => workspace.kind !== "runner").map(tileFor);
     const runners = server.workspaces.filter((workspace) => workspace.kind === "runner").map(tileFor);

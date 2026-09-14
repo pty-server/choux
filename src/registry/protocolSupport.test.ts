@@ -1,6 +1,6 @@
 import { PROTOCOL_MINOR, PROTOCOL_VERSION } from "@pty-server/protocol";
 import { describe, expect, it } from "vitest";
-import { incompatibleServerMessage, runnerSupport } from "./protocolSupport";
+import { incompatibleServerMessage, runnerSupport, workspaceDeleteSupport } from "./protocolSupport";
 
 describe("runnerSupport", () => {
   it("is unknown until the server info has been read", () => {
@@ -19,6 +19,21 @@ describe("runnerSupport", () => {
   it("is incompatible on a different major at any minor", () => {
     expect(runnerSupport({ protocol: PROTOCOL_VERSION + 1, protocolMinor: PROTOCOL_MINOR })).toBe("incompatible");
     expect(runnerSupport({ protocol: PROTOCOL_VERSION - 1 })).toBe("incompatible");
+  });
+});
+
+describe("workspaceDeleteSupport", () => {
+  it("is unknown until the server info has been read", () => {
+    expect(workspaceDeleteSupport(undefined)).toBeUndefined();
+  });
+
+  it("is legacy on a runner-capable server that predates workspace deletion", () => {
+    expect(workspaceDeleteSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 1 })).toBe("legacy");
+  });
+
+  it("is supported from minor 2 on", () => {
+    expect(workspaceDeleteSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 2 })).toBe("supported");
+    expect(workspaceDeleteSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 3 })).toBe("supported");
   });
 });
 
