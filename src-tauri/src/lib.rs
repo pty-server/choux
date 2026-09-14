@@ -29,7 +29,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Window, WindowEvent,
+    AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 #[cfg(unix)]
@@ -927,6 +927,24 @@ fn global_shortcut_set(_accelerator: Option<String>) -> Result<(), String> {
     Err("Global shortcuts are only available on desktop.".into())
 }
 
+fn build_main_window(app: &AppHandle) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .ok_or("tauri.conf.json defines no main window")?;
+    let builder = WebviewWindowBuilder::from_config(app, config)?;
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .decorations(true)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(12.0, 22.0));
+    Ok(builder.build()?)
+}
+
 fn hide_to_tray(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::CloseRequested { api, .. } => {
@@ -973,9 +991,7 @@ pub fn run() {
             // platform icon cached during a previous build.
             let app_icon = Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))?;
             let tray_icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
-            if let Some(window) = app.get_webview_window("main") {
-                window.set_icon(app_icon.clone())?;
-            }
+            build_main_window(app.handle())?.set_icon(app_icon.clone())?;
             TrayIconBuilder::with_id("main-tray")
                 .icon(tray_icon)
                 .menu(&menu)

@@ -2,6 +2,7 @@
   import { onMount, type Snippet } from "svelte";
   import ServerPopover from "../../features/servers/ServerPopover.svelte";
   import type { AggregateServerStatus } from "../../registry/types";
+  import { isMacPlatform } from "../extensibility/keydispatch";
 
   interface Props {
     aggregateStatus: AggregateServerStatus;
@@ -25,10 +26,13 @@
 
   let showServerPopover = $state(false);
   let isMaximized = $state(false);
+  let isFullscreen = $state(false);
 
   function isTauriWindow(): boolean {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   }
+
+  const hasTrafficLights = isTauriWindow() && isMacPlatform();
 
   async function withCurrentWindow(action: (appWindow: import("@tauri-apps/api/window").Window) => Promise<void>) {
     if (!isTauriWindow()) return;
@@ -70,9 +74,12 @@
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const appWindow = getCurrentWindow();
       isMaximized = await appWindow.isMaximized();
+      isFullscreen = await appWindow.isFullscreen();
       unlistenResize = await appWindow.onResized(() => {
-        void appWindow.isMaximized().then((maximized) => {
-          if (!disposed) isMaximized = maximized;
+        void Promise.all([appWindow.isMaximized(), appWindow.isFullscreen()]).then(([maximized, fullscreen]) => {
+          if (disposed) return;
+          isMaximized = maximized;
+          isFullscreen = fullscreen;
         });
       });
       unlistenFocus = await appWindow.onFocusChanged(({ payload: focused }) => {
@@ -88,7 +95,7 @@
   });
 </script>
 
-<div class="topbar">
+<div class="topbar" class:traffic-lights={hasTrafficLights} class:fullscreen={isFullscreen}>
   <div class="topbar-navigation">
     <button
       type="button"
@@ -141,7 +148,7 @@
       aria-pressed={settingsOpen}
       onclick={onToggleSettings}
     >⚙</button>
-  {#if isTauriWindow()}
+  {#if isTauriWindow() && !hasTrafficLights}
     <div class="window-controls" aria-label="Window controls">
       <button type="button" class="window-control" aria-label="Minimize window" onclick={minimizeWindow}>
         <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" /></svg>
@@ -178,6 +185,14 @@
     border-bottom: 1px solid var(--border);
     min-height: 38px;
     user-select: none;
+  }
+
+  .topbar.traffic-lights {
+    padding-right: var(--sp-2);
+  }
+
+  .topbar.traffic-lights:not(.fullscreen) {
+    padding-left: 78px;
   }
 
   .topbar-navigation {
