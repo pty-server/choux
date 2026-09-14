@@ -47,6 +47,12 @@ export function reorderSessionIds(
   return [...without.slice(0, insertAt), movedId, ...without.slice(insertAt)];
 }
 
+export function replaceSessionId(order: SessionOrder, scope: string, previousId: string, nextId: string): SessionOrder {
+  const ids = order[scope];
+  if (ids === undefined || !ids.includes(previousId)) return order;
+  return { ...order, [scope]: ids.map((id) => (id === previousId ? nextId : id)) };
+}
+
 export async function getSessionOrder(): Promise<SessionOrder> {
   const db = await openDatabase();
   const saved = await new Promise<unknown>((resolve, reject) => {

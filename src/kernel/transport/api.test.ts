@@ -39,3 +39,18 @@ describe("createApiClient workspaces", () => {
     expect(fetch.mock.calls[0][0]).toBe("http://server.test/v1/directories?workspaceId=w+1");
   });
 });
+
+describe("createApiClient session control", () => {
+  it("signals a session and accepts an empty response", async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetch);
+    const client = createApiClient({ baseUrl: "http://server.test", token: "t" });
+
+    await client.signalSession("s 1", "SIGKILL");
+
+    expect(fetch.mock.calls[0][0]).toBe("http://server.test/v1/sessions/s%201/signal");
+    expect(fetch.mock.calls[0][1].method).toBe("POST");
+    expect(fetch.mock.calls[0][1].headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ signal: "SIGKILL" });
+  });
+});

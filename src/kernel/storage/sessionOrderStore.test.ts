@@ -6,6 +6,7 @@ import {
   normalizeSessionOrder,
   orderSessions,
   reorderSessionIds,
+  replaceSessionId,
   saveSessionOrder,
   sessionOrderScope,
 } from "./sessionOrderStore";
@@ -78,6 +79,20 @@ describe("reorderSessionIds", () => {
   it("leaves the order alone when either id is unknown", () => {
     expect(reorderSessionIds(["a", "b"], "gone", "a", "before")).toEqual(["a", "b"]);
     expect(reorderSessionIds(["a", "b"], "a", "gone", "before")).toEqual(["a", "b"]);
+  });
+});
+
+describe("replaceSessionId", () => {
+  it("puts a restarted session where the old one was", () => {
+    expect(replaceSessionId({ "one:w": ["a", "old", "b"], other: ["x"] }, "one:w", "old", "new"))
+      .toEqual({ "one:w": ["a", "new", "b"], other: ["x"] });
+  });
+
+  it("returns the same order when the scope or the id is unknown", () => {
+    const order = { "one:w": ["a"] };
+
+    expect(replaceSessionId(order, "two:w", "a", "b")).toBe(order);
+    expect(replaceSessionId(order, "one:w", "gone", "b")).toBe(order);
   });
 });
 

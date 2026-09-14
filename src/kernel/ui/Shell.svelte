@@ -14,7 +14,7 @@
   import { openExternalUrl } from "../platform/openUrl";
   import { accentPalette } from "../storage/serverConfigStore";
   import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
-  import { getSessionOrder, orderSessions, reorderSessionIds, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
+  import { getSessionOrder, orderSessions, reorderSessionIds, replaceSessionId, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
   import type { SessionDropPosition } from "../../registry/types";
   import { agentStateKey } from "../../registry/agentStateKey";
   import ShellTopBar from "./ShellTopBar.svelte";
@@ -40,6 +40,9 @@
     onSelectSession: (session: Session) => void;
     onRenameSession: (session: Session) => void;
     onRemoveSession?: (session: Session) => void;
+    onStopSession?: (session: Session) => void;
+    onForceKillSession?: (session: Session) => void;
+    onRestartSession?: (session: Session) => Promise<Session | undefined>;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
     onAddWorkspace: () => void;
@@ -69,6 +72,9 @@
     onSelectSession,
     onRenameSession,
     onRemoveSession,
+    onStopSession,
+    onForceKillSession,
+    onRestartSession,
     onStartDefaultSession,
     onNewSession,
     onAddWorkspace,
@@ -180,6 +186,16 @@
     void saveSessionOrder(sessionOrder).catch(() => {});
   }
 
+  async function restartSession(session: Session): Promise<void> {
+    const scope = orderScope;
+    const replacement = await onRestartSession?.(session);
+    if (replacement === undefined || scope === undefined) return;
+    const next = replaceSessionId(sessionOrder, scope, session.id, replacement.id);
+    if (next === sessionOrder) return;
+    sessionOrder = next;
+    void saveSessionOrder(sessionOrder).catch(() => {});
+  }
+
   let focusedSession = $derived(
     focusedSessionId ? sessions.find((s) => s.id === focusedSessionId) : undefined,
   );
@@ -268,6 +284,9 @@
         {onSelectSession}
         {onRenameSession}
         {onRemoveSession}
+        {onStopSession}
+        {onForceKillSession}
+        onRestartSession={onRestartSession ? restartSession : undefined}
         onReorderSession={reorderSession}
         {onStartDefaultSession}
         {onNewSession}

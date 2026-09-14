@@ -4,6 +4,7 @@
   import { createServerRegistry } from "./kernel/servers/serverRegistry.svelte";
   import { gateSessionRequest, gateWorkspaceRequest } from "./kernel/servers/creationRequests";
   import { openHomeProject } from "./kernel/servers/localAutostart";
+  import { restartSession } from "./kernel/servers/sessionRestart";
   import Shell from "./kernel/ui/Shell.svelte";
   import AttachPane from "./kernel/ui/AttachPane.svelte";
   import NewSessionDialog from "./features/sessions/NewSessionDialog.svelte";
@@ -66,7 +67,7 @@
   let resolvedCredential = $state<ResolvedCredential | undefined>(undefined);
   let resolvedToken = $derived(credentialFor(resolvedCredential, conn?.config));
   let hasServers = $derived(registry.servers.length > 0);
-  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "deep-link" | "local-discovery";
+  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "session-control" | "deep-link" | "local-discovery";
 
   let error = $state("");
   let errorSource = $state<ErrorSource | undefined>(undefined);
@@ -300,6 +301,49 @@
       registry.refresh(serverId);
     } catch (err) {
       showError(err instanceof Error ? err.message : String(err), "session-remove");
+    }
+  }
+
+  async function handleSignalSession(session: Session, signal: string): Promise<void> {
+    const serverId = selectedServerId;
+    const targetConn = serverId ? registry.get(serverId) : undefined;
+    if (!serverId || !targetConn) return;
+    try {
+      const token = await getServerToken(targetConn.config);
+      if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
+      await apiFor(targetConn.config, token).signalSession(session.id, signal);
+      registry.refresh(serverId);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "session-control");
+    }
+  }
+
+  async function handleRestartSession(session: Session): Promise<Session | undefined> {
+    const serverId = selectedServerId;
+    const targetConn = serverId ? registry.get(serverId) : undefined;
+    if (!serverId || !targetConn) return undefined;
+    try {
+      const token = await getServerToken(targetConn.config);
+      if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
+      const api = apiFor(targetConn.config, token);
+      const replacement = await restartSession(session, {
+        getSession: async (id) => (await api.getSessions(session.workspaceId)).find((candidate) => candidate.id === id),
+        signal: api.signalSession,
+        createSession: async (body) => {
+          const gated = gateSessionRequest(body, targetConn.info);
+          if ("refusal" in gated) throw new Error(gated.refusal);
+          return api.createSession(gated.body);
+        },
+        deleteSession: api.deleteSession,
+        wait: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      });
+      if (focusedSessionId === session.id) focusSession(serverId, replacement.id, replacement.workspaceId);
+      return replacement;
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "session-control");
+      return undefined;
+    } finally {
+      registry.refresh(serverId);
     }
   }
 
@@ -560,6 +604,9 @@
     }}
     onRenameSession={(session) => sessionToRename = session}
     onRemoveSession={(session) => void handleRemoveSession(session)}
+    onStopSession={(session) => void handleSignalSession(session, "SIGTERM")}
+    onForceKillSession={(session) => void handleSignalSession(session, "SIGKILL")}
+    onRestartSession={handleRestartSession}
     onStartDefaultSession={handleStartDefaultSession}
     onNewSession={() => { newSessionError = ""; newSessionDialogGeneration += 1; showNewSessionDialog = true; }}
     onAddWorkspace={openAddWorkspaceDialog}

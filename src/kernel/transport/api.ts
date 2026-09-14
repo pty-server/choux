@@ -106,15 +106,18 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     return response.json() as Promise<T>;
   }
 
-  async function requestEmpty(path: string, method: string): Promise<void> {
+  async function requestEmpty(path: string, method: string, body?: unknown): Promise<void> {
+    const bodyHeaders: Record<string, string> = body === undefined ? {} : { "content-type": "application/json" };
+    const payload = body === undefined ? undefined : JSON.stringify(body);
     if (localInstance !== undefined) {
-      const response = await localPtysRequest(localInstance, path, { method, headers });
+      const response = await localPtysRequest(localInstance, path, { method, headers: { ...headers, ...bodyHeaders }, body: payload });
       if (response.status < 200 || response.status >= 300) throw new ApiError(response.body || response.statusText, response.status);
       return;
     }
     const response = await fetch(`${base}${path}`, {
       method,
-      headers: { ...headers, ...authHeaders },
+      headers: { ...headers, ...authHeaders, ...bodyHeaders },
+      body: payload,
     });
     if (!response.ok) await throwForResponse(response);
   }
@@ -137,6 +140,7 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     createSession: (body: CreateSessionBody) => requestJson<Session>("/v1/sessions", body),
     updateSession: (id: string, name: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { name }, "PATCH"),
     deleteSession: (id: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}`, "DELETE"),
+    signalSession: (id: string, signal: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}/signal`, "POST", { signal }),
     execSession: (id: string, body: ExecSessionRequest) => requestJson<ExecSessionResponse>(
       `/v1/sessions/${encodeURIComponent(id)}/exec`,
       body,

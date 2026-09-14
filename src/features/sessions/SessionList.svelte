@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import type { Session } from "@pty-server/protocol";
   import type { SessionDropPosition } from "../../registry/types";
   import { sessionLocation, sessionState } from "./runnerRow";
@@ -13,16 +14,35 @@
     onSelect?: (session: Session) => void;
     onRename?: (session: Session) => void;
     onRemove?: (session: Session) => void;
+    onStop?: (session: Session) => void;
+    onForceKill?: (session: Session) => void;
+    onRestart?: (session: Session) => Promise<void> | void;
     onReorder?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     sessionExtra?: Snippet<[Session]>;
   }
 
-  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, runnerRoot, onSelect, onRename, onRemove, onReorder, sessionExtra }: Props = $props();
+  let {
+    sessions,
+    sortKey = (session) => session.exited?.at ?? session.createdAt,
+    selectedSessionId,
+    terminalTitles = {},
+    runnerRoot,
+    onSelect,
+    onRename,
+    onRemove,
+    onStop,
+    onForceKill,
+    onRestart,
+    onReorder,
+    sessionExtra,
+  }: Props = $props();
   let sortedSessions = $derived(onReorder ? sessions : [...sessions].sort((a, b) => sortKey(b) - sortKey(a)));
   let contextMenu = $state<{ session: Session; x: number; y: number } | undefined>(undefined);
   let draggedSessionId = $state<string | undefined>(undefined);
   let dropTarget = $state<{ sessionId: string; position: SessionDropPosition } | undefined>(undefined);
   let now = $state(Date.now());
+  const stopRequested = new SvelteSet<string>();
+  const restarting = new SvelteSet<string>();
 
   $effect(() => {
     if (runnerRoot === undefined) return;
@@ -78,13 +98,28 @@
   }
 
   function openContextMenu(event: MouseEvent, session: Session): void {
-    if (!onRename && !canRemove(session)) return;
+    if (!onRename && !canRemove(session) && !onStop && !onRestart) return;
     event.preventDefault();
     contextMenu = {
       session,
       x: Math.min(event.clientX, window.innerWidth - 156),
-      y: Math.min(event.clientY, window.innerHeight - 48),
+      y: Math.min(event.clientY, window.innerHeight - 180),
     };
+  }
+
+  function stop(session: Session): void {
+    stopRequested.add(session.id);
+    onStop?.(session);
+  }
+
+  async function restart(session: Session): Promise<void> {
+    restarting.add(session.id);
+    try {
+      await onRestart?.(session);
+    } finally {
+      restarting.delete(session.id);
+      stopRequested.delete(session.id);
+    }
   }
 </script>
 
@@ -112,7 +147,9 @@
           <span class="session-labels">
             <span class="title">{title(session)}</span>
             {#if runnerRoot !== undefined}
-              <span class="detail" title={session.cwd}>{sessionLocation(session, runnerRoot)} · {sessionState(session, now)}</span>
+              <span class="detail" title={session.cwd}>
+                {sessionLocation(session, runnerRoot)} · {restarting.has(session.id) ? "restarting…" : sessionState(session, now)}
+              </span>
             {:else if terminalTitles[session.id]}
               <span class="terminal-title" title={terminalTitles[session.id]}>{terminalTitles[session.id]}</span>
             {/if}
@@ -134,12 +171,23 @@
 </ul>
 
 {#if contextMenu}
+  {@const menuSession = contextMenu.session}
+  {@const busy = restarting.has(menuSession.id)}
   <div class="context-menu" role="menu" tabindex="-1" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>
-    {#if onRename}
-      <button type="button" role="menuitem" onclick={() => { onRename(contextMenu!.session); contextMenu = undefined; }}>Rename session</button>
+    {#if onRestart && !busy}
+      <button type="button" role="menuitem" onclick={() => { void restart(menuSession); contextMenu = undefined; }}>Restart</button>
     {/if}
-    {#if canRemove(contextMenu.session)}
-      <button type="button" role="menuitem" class="destructive" onclick={() => { onRemove!(contextMenu!.session); contextMenu = undefined; }}>Remove session</button>
+    {#if onStop && !menuSession.exited && !busy}
+      <button type="button" role="menuitem" onclick={() => { stop(menuSession); contextMenu = undefined; }}>Stop</button>
+    {/if}
+    {#if onForceKill && !menuSession.exited && !busy && stopRequested.has(menuSession.id)}
+      <button type="button" role="menuitem" class="destructive" onclick={() => { onForceKill(menuSession); contextMenu = undefined; }}>Force kill</button>
+    {/if}
+    {#if onRename}
+      <button type="button" role="menuitem" onclick={() => { onRename(menuSession); contextMenu = undefined; }}>Rename session</button>
+    {/if}
+    {#if canRemove(menuSession) && !busy}
+      <button type="button" role="menuitem" class="destructive" onclick={() => { onRemove?.(menuSession); contextMenu = undefined; }}>Remove session</button>
     {/if}
   </div>
 {/if}

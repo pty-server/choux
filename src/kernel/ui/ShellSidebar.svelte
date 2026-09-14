@@ -21,6 +21,9 @@
     onSelectSession: (session: Session) => void;
     onRenameSession: (session: Session) => void;
     onRemoveSession?: (session: Session) => void;
+    onStopSession?: (session: Session) => void;
+    onForceKillSession?: (session: Session) => void;
+    onRestartSession?: (session: Session) => Promise<void>;
     onReorderSession?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
@@ -44,6 +47,9 @@
     onSelectSession,
     onRenameSession,
     onRemoveSession,
+    onStopSession,
+    onForceKillSession,
+    onRestartSession,
     onReorderSession,
     onStartDefaultSession,
     onNewSession,
@@ -121,6 +127,9 @@
       onSelect={onSelectSession}
       onRename={onRenameSession}
       onRemove={isRunner ? onRemoveSession : undefined}
+      onStop={isRunner ? onStopSession : undefined}
+      onForceKill={isRunner ? onForceKillSession : undefined}
+      onRestart={isRunner ? onRestartSession : undefined}
       onReorder={onReorderSession}
     />
     {#if isRunner}

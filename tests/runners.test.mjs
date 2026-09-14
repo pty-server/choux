@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApiClient } from "../src/kernel/transport/api.ts";
 import { openHomeProject } from "../src/kernel/servers/localAutostart.ts";
+import { restartSession } from "../src/kernel/servers/sessionRestart.ts";
 
 const cliPath = fileURLToPath(new URL("../../ptys/dist/cli.js", import.meta.url));
 const token = "choux-runners-token";
@@ -131,6 +132,40 @@ test("browsing scoped to a workspace starts at its root, even outside the browse
     shared.client.listDirectories(undefined, undefined, undefined, "no-such-workspace"),
     (error) => error.status === 404,
   );
+});
+
+test("stopping a runner session signals it until it exits", async () => {
+  const runner = await shared.client.createWorkspace({ path: tempDirectory("choux-runners-root-"), kind: "runner" });
+  const session = await shared.client.createSession(sessionBody(runner.id));
+
+  await shared.client.signalSession(session.id, "SIGTERM");
+
+  const stopped = await waitFor(async () => (await shared.client.getSessions(runner.id))
+    .find((candidate) => candidate.id === session.id && candidate.exited !== undefined));
+  assert.ok(stopped.exited);
+});
+
+test("restarting a running runner session replaces it with an identical one", async () => {
+  const root = tempDirectory("choux-runners-root-");
+  mkdirSync(join(root, "web"));
+  const runner = await shared.client.createWorkspace({ path: root, kind: "runner" });
+  const original = await shared.client.createSession(sessionBody(runner.id, { cwd: "web", name: "dev", env: { CHOUX_RUNNER: "1" } }));
+
+  const replacement = await restartSession(original, {
+    getSession: async (id) => (await shared.client.getSessions(runner.id)).find((candidate) => candidate.id === id),
+    signal: shared.client.signalSession,
+    createSession: shared.client.createSession,
+    deleteSession: shared.client.deleteSession,
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  }, { stopTimeoutMs: 3000, pollMs: 50 });
+
+  assert.notEqual(replacement.id, original.id);
+  assert.equal(replacement.exited, undefined);
+  assert.equal(replacement.cwd, join(root, "web"));
+  assert.equal(replacement.cmd, "cat");
+  assert.equal(replacement.name, "dev");
+  assert.equal(replacement.env.CHOUX_RUNNER, "1");
+  assert.deepEqual((await shared.client.getSessions(runner.id)).map((candidate) => candidate.id), [replacement.id]);
 });
 
 test("local autostart opens exactly one home project with one session on a fresh server", async () => {
