@@ -17,6 +17,10 @@ export function workspaceDeleteSupport(info: ProtocolInfo | undefined): FeatureS
   return info === undefined ? undefined : featureSupport(serverProtocolLevel(info), "workspaceDelete");
 }
 
+export function sessionMoveSupport(info: ProtocolInfo | undefined): FeatureSupport | undefined {
+  return info === undefined ? undefined : featureSupport(serverProtocolLevel(info), "sessionMove");
+}
+
 export function incompatibleServerMessage(info: ProtocolInfo): string {
   const server = serverProtocolLevel(info);
   const upgrade = server.major > PROTOCOL_VERSION ? "Upgrade Choux." : "Upgrade ptys on the server.";

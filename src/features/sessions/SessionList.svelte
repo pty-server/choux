@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import type { Session } from "@pty-server/protocol";
+  import type { Session, Workspace } from "@pty-server/protocol";
   import type { SessionDropPosition } from "../../registry/types";
   import { sessionLocation, sessionState } from "./runnerRow";
 
@@ -17,6 +17,9 @@
     onStop?: (session: Session) => void;
     onForceKill?: (session: Session) => void;
     onRestart?: (session: Session) => Promise<void> | void;
+    moveTargets?: Workspace[];
+    moveBlocker?: string;
+    onMove?: (session: Session, workspaceId: string) => void;
     onReorder?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     sessionExtra?: Snippet<[Session]>;
   }
@@ -33,11 +36,15 @@
     onStop,
     onForceKill,
     onRestart,
+    moveTargets = [],
+    moveBlocker,
+    onMove,
     onReorder,
     sessionExtra,
   }: Props = $props();
   let sortedSessions = $derived(onReorder ? sessions : [...sessions].sort((a, b) => sortKey(b) - sortKey(a)));
   let contextMenu = $state<{ session: Session; x: number; y: number } | undefined>(undefined);
+  let moveMenuOpen = $state(false);
   let draggedSessionId = $state<string | undefined>(undefined);
   let dropTarget = $state<{ sessionId: string; position: SessionDropPosition } | undefined>(undefined);
   let now = $state(Date.now());
@@ -97,13 +104,19 @@
     return !!onRemove && session.exited !== undefined;
   }
 
+  function moveTargetsFor(session: Session): Workspace[] {
+    return onMove ? moveTargets.filter((workspace) => workspace.id !== session.workspaceId) : [];
+  }
+
   function openContextMenu(event: MouseEvent, session: Session): void {
-    if (!onRename && !canRemove(session) && !onStop && !onRestart) return;
+    const canMove = moveTargetsFor(session).length > 0;
+    if (!onRename && !canRemove(session) && !onStop && !onRestart && !canMove) return;
     event.preventDefault();
+    moveMenuOpen = false;
     contextMenu = {
       session,
-      x: Math.min(event.clientX, window.innerWidth - 156),
-      y: Math.min(event.clientY, window.innerHeight - 180),
+      x: Math.min(event.clientX, window.innerWidth - 216),
+      y: Math.min(event.clientY, window.innerHeight - (canMove ? 360 : 180)),
     };
   }
 
@@ -185,6 +198,28 @@
     {/if}
     {#if onRename}
       <button type="button" role="menuitem" onclick={() => { onRename(menuSession); contextMenu = undefined; }}>Rename session</button>
+    {/if}
+    {#if onMove && !busy && moveTargetsFor(menuSession).length > 0}
+      <button
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={moveMenuOpen}
+        disabled={moveBlocker !== undefined}
+        onclick={(event) => { event.stopPropagation(); moveMenuOpen = !moveMenuOpen; }}
+      >Move to workspace</button>
+      {#if moveBlocker}
+        <p class="context-menu-hint">{moveBlocker}</p>
+      {:else if moveMenuOpen}
+        <div class="move-targets" role="menu">
+          {#each moveTargetsFor(menuSession) as workspace (workspace.id)}
+            <button type="button" role="menuitem" onclick={() => { onMove(menuSession, workspace.id); contextMenu = undefined; }}>
+              <span class="move-target-name">{workspace.name}</span>
+              {#if workspace.kind === "runner"}<span class="move-target-kind">runner</span>{/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
     {#if canRemove(menuSession) && !busy}
       <button type="button" role="menuitem" class="destructive" onclick={() => { onRemove?.(menuSession); contextMenu = undefined; }}>Remove session</button>
@@ -301,6 +336,7 @@
     position: fixed;
     z-index: 200;
     min-width: 150px;
+    max-width: 200px;
     padding: var(--sp-1);
     border: none;
     border: 1px solid var(--border);
@@ -321,12 +357,54 @@
     cursor: pointer;
   }
 
-  .context-menu button:hover,
+  .context-menu button:hover:enabled,
   .context-menu button:focus-visible {
     background: var(--bg);
   }
 
   .context-menu button.destructive {
     color: #e05252;
+  }
+
+  .context-menu button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .context-menu-hint {
+    margin: 0;
+    padding: 0 var(--sp-2) var(--sp-1);
+    color: var(--fg-dim);
+    font-size: 0.75rem;
+  }
+
+  .move-targets {
+    max-height: 180px;
+    overflow-y: auto;
+    margin-left: var(--sp-2);
+    padding-left: var(--sp-1);
+    border-left: 1px solid var(--border);
+  }
+
+  .move-targets button {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+  }
+
+  .move-target-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .move-target-kind {
+    flex: none;
+    padding: 0 var(--sp-1);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--fg-dim);
+    font-size: 0.7rem;
   }
 </style>

@@ -582,6 +582,12 @@ describe("server registry event stream", () => {
 
     socket.onmessage?.({ data: JSON.stringify({
       t: "event",
+      event: { sessionId: "session-1", type: "session.updated", data: { workspaceId: "workspace-2" } },
+    }) });
+    expect(registry.get(conn.config.id)?.sessions[0]).toMatchObject({ name: "renamed", workspaceId: "workspace-2" });
+
+    socket.onmessage?.({ data: JSON.stringify({
+      t: "event",
       event: {
         sessionId: "session-2",
         type: "session.created",

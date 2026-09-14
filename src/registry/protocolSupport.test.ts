@@ -1,6 +1,6 @@
 import { PROTOCOL_MINOR, PROTOCOL_VERSION } from "@pty-server/protocol";
 import { describe, expect, it } from "vitest";
-import { incompatibleServerMessage, runnerSupport, workspaceDeleteSupport } from "./protocolSupport";
+import { incompatibleServerMessage, runnerSupport, sessionMoveSupport, workspaceDeleteSupport } from "./protocolSupport";
 
 describe("runnerSupport", () => {
   it("is unknown until the server info has been read", () => {
@@ -34,6 +34,21 @@ describe("workspaceDeleteSupport", () => {
   it("is supported from minor 2 on", () => {
     expect(workspaceDeleteSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 2 })).toBe("supported");
     expect(workspaceDeleteSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 3 })).toBe("supported");
+  });
+});
+
+describe("sessionMoveSupport", () => {
+  it("is unknown until the server info has been read", () => {
+    expect(sessionMoveSupport(undefined)).toBeUndefined();
+  });
+
+  it("is legacy on a server that predates moving sessions", () => {
+    expect(sessionMoveSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 2 })).toBe("legacy");
+  });
+
+  it("is supported from minor 3 on", () => {
+    expect(sessionMoveSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 3 })).toBe("supported");
+    expect(sessionMoveSupport({ protocol: PROTOCOL_VERSION, protocolMinor: 4 })).toBe("supported");
   });
 });
 

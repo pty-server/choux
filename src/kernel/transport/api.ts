@@ -140,6 +140,7 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     deleteWorkspace: (id: string) => requestEmpty(`/v1/workspaces/${encodeURIComponent(id)}`, "DELETE"),
     createSession: (body: CreateSessionBody) => requestJson<Session>("/v1/sessions", body),
     updateSession: (id: string, name: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { name }, "PATCH"),
+    moveSession: (id: string, workspaceId: string) => requestJson<Session>(`/v1/sessions/${encodeURIComponent(id)}`, { workspaceId }, "PATCH"),
     deleteSession: (id: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}`, "DELETE"),
     signalSession: (id: string, signal: string) => requestEmpty(`/v1/sessions/${encodeURIComponent(id)}/signal`, "POST", { signal }),
     execSession: (id: string, body: ExecSessionRequest) => requestJson<ExecSessionResponse>(

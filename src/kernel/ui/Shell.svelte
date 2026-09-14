@@ -9,6 +9,7 @@
   import { protocolMismatch } from "../transport/protocolVersion";
   import { incompatibleServerMessage, runnerSupport } from "../../registry/protocolSupport";
   import { buildRailModel } from "./railModel";
+  import { sessionMoveBlocker } from "../servers/sessionMove";
   import { activeTerminalClipboard } from "./terminalClipboard";
   import { writeClipboardText } from "../platform/clipboard";
   import { openExternalUrl } from "../platform/openUrl";
@@ -43,6 +44,7 @@
     onStopSession?: (session: Session) => void;
     onForceKillSession?: (session: Session) => void;
     onRestartSession?: (session: Session) => Promise<Session | undefined>;
+    onMoveSession?: (session: Session, workspaceId: string) => void;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
     onAddWorkspace: () => void;
@@ -76,6 +78,7 @@
     onStopSession,
     onForceKillSession,
     onRestartSession,
+    onMoveSession,
     onStartDefaultSession,
     onNewSession,
     onAddWorkspace,
@@ -204,6 +207,7 @@
   let focusedTerminalTitle = $derived(focusedSessionId ? terminalTitles[focusedSessionId] : undefined);
   let focusedServerConfig = $derived(selectedServerId ? serverRegistry.get(selectedServerId)?.config : undefined);
   let selectedServerInfo = $derived(selectedServerId ? serverRegistry.get(selectedServerId)?.info : undefined);
+  let moveBlocker = $derived(sessionMoveBlocker(selectedServerId ? serverRegistry.get(selectedServerId) : undefined));
   let creationBlocked = $derived(
     selectedServerInfo && runnerSupport(selectedServerInfo) === "incompatible" ? incompatibleServerMessage(selectedServerInfo) : undefined,
   );
@@ -290,6 +294,9 @@
         {onStopSession}
         {onForceKillSession}
         onRestartSession={onRestartSession ? restartSession : undefined}
+        moveTargets={workspaces}
+        {moveBlocker}
+        {onMoveSession}
         onReorderSession={reorderSession}
         {onStartDefaultSession}
         {onNewSession}

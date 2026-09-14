@@ -24,6 +24,9 @@
     onStopSession?: (session: Session) => void;
     onForceKillSession?: (session: Session) => void;
     onRestartSession?: (session: Session) => Promise<void>;
+    moveTargets: Workspace[];
+    moveBlocker?: string;
+    onMoveSession?: (session: Session, workspaceId: string) => void;
     onReorderSession?: (movedSessionId: string, targetSessionId: string, position: SessionDropPosition) => void;
     onStartDefaultSession: () => void;
     onNewSession: () => void;
@@ -50,6 +53,9 @@
     onStopSession,
     onForceKillSession,
     onRestartSession,
+    moveTargets,
+    moveBlocker,
+    onMoveSession,
     onReorderSession,
     onStartDefaultSession,
     onNewSession,
@@ -130,6 +136,9 @@
       onStop={isRunner ? onStopSession : undefined}
       onForceKill={isRunner ? onForceKillSession : undefined}
       onRestart={isRunner ? onRestartSession : undefined}
+      {moveTargets}
+      {moveBlocker}
+      onMove={onMoveSession}
       onReorder={onReorderSession}
     />
     {#if isRunner}
@@ -168,7 +177,7 @@
     {#if foldedSessions.length > 0}
       <details>
         <summary>Recently exited ({foldedSessions.length})</summary>
-        <SessionList sessions={foldedSessions} {terminalTitles} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} onRemove={onRemoveSession} />
+        <SessionList sessions={foldedSessions} {terminalTitles} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} onRemove={onRemoveSession} {moveTargets} {moveBlocker} onMove={onMoveSession} />
       </details>
     {/if}
     {#each sidebarItems as item (item.id)}

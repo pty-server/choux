@@ -42,8 +42,11 @@ function isTitleEvent(value: unknown): value is { title: string } {
   return isEventData(value) && typeof value.title === "string";
 }
 
-function isRenameEvent(value: unknown): value is { name: string } {
-  return isEventData(value) && typeof value.name === "string";
+function isSessionUpdateEvent(value: unknown): value is { name?: string; workspaceId?: string } {
+  if (!isEventData(value)) return false;
+  const { name, workspaceId } = value;
+  if (name === undefined && workspaceId === undefined) return false;
+  return (name === undefined || typeof name === "string") && (workspaceId === undefined || typeof workspaceId === "string");
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -402,14 +405,17 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         ));
         return;
       }
-      if (event.type !== "session.updated" || !isRenameEvent(event.data)) return;
-      const name = event.data.name;
+      if (event.type !== "session.updated" || !isSessionUpdateEvent(event.data)) return;
+      const { name, workspaceId } = event.data;
 
       const session = conn.sessions.find((candidate) => candidate.id === event.sessionId);
-      if (!session || session.name === name) return;
+      if (!session) return;
+      if ((name === undefined || name === session.name) && (workspaceId === undefined || workspaceId === session.workspaceId)) return;
       sessionEventRevision += 1;
       conn.sessions = conn.sessions.map((candidate) => (
-        candidate.id === event.sessionId ? { ...candidate, name } : candidate
+        candidate.id === event.sessionId
+          ? { ...candidate, ...(name === undefined ? {} : { name }), ...(workspaceId === undefined ? {} : { workspaceId }) }
+          : candidate
       ));
     };
 

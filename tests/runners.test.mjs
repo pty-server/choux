@@ -184,6 +184,22 @@ test("closing a workspace is refused while a session runs and takes its exited s
   await assert.rejects(shared.client.deleteWorkspace(runner.id), (error) => error.status === 404);
 });
 
+test("moving a running session keeps its process and frees the workspace it left", async () => {
+  const root = tempDirectory("choux-runners-root-");
+  const project = await shared.client.createWorkspace({ path: root });
+  const runner = await shared.client.createWorkspace({ path: root, kind: "runner" });
+  const session = await shared.client.createSession(sessionBody(project.id));
+
+  const moved = await shared.client.moveSession(session.id, runner.id);
+
+  assert.equal(moved.workspaceId, runner.id);
+  assert.equal(moved.pid, session.pid);
+  assert.equal(moved.exited, undefined);
+  assert.deepEqual((await shared.client.getSessions(runner.id)).map((candidate) => candidate.id), [session.id]);
+  await shared.client.deleteWorkspace(project.id);
+  await assert.rejects(shared.client.moveSession(session.id, project.id), (error) => error.status === 404);
+});
+
 test("local autostart opens exactly one home project with one session on a fresh server", async () => {
   const fresh = await boot();
   let created;

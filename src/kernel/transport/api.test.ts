@@ -71,4 +71,15 @@ describe("createApiClient session control", () => {
     expect(fetch.mock.calls[0][1].headers["content-type"]).toBe("application/json");
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ signal: "SIGKILL" });
   });
+
+  it("moves a session by patching only its workspace", async () => {
+    const fetch = respondWith({ id: "s 1", workspaceId: "w 2" });
+    const client = createApiClient({ baseUrl: "http://server.test", token: "t" });
+
+    await expect(client.moveSession("s 1", "w 2")).resolves.toMatchObject({ workspaceId: "w 2" });
+
+    expect(fetch.mock.calls[0][0]).toBe("http://server.test/v1/sessions/s%201");
+    expect(fetch.mock.calls[0][1].method).toBe("PATCH");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ workspaceId: "w 2" });
+  });
 });

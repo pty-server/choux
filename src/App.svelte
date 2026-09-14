@@ -67,7 +67,7 @@
   let resolvedCredential = $state<ResolvedCredential | undefined>(undefined);
   let resolvedToken = $derived(credentialFor(resolvedCredential, conn?.config));
   let hasServers = $derived(registry.servers.length > 0);
-  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "session-control" | "workspace-close" | "deep-link" | "local-discovery";
+  type ErrorSource = "initialization" | "token" | "last-session" | "session-create" | "session-remove" | "session-control" | "session-move" | "workspace-close" | "deep-link" | "local-discovery";
 
   let error = $state("");
   let errorSource = $state<ErrorSource | undefined>(undefined);
@@ -347,6 +347,22 @@
     }
   }
 
+  async function handleMoveSession(session: Session, workspaceId: string): Promise<void> {
+    const serverId = selectedServerId;
+    const targetConn = serverId ? registry.get(serverId) : undefined;
+    if (!serverId || !targetConn) return;
+    try {
+      const token = await getServerToken(targetConn.config);
+      if (serverUsesToken(targetConn.config) && !token) throw new Error("No saved token for the selected server.");
+      const moved = await apiFor(targetConn.config, token).moveSession(session.id, workspaceId);
+      if (selectedServerId === serverId && focusedSessionId === moved.id) selectedWorkspaceId = moved.workspaceId;
+      clearError("session-move");
+      registry.refresh(serverId);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "session-move");
+    }
+  }
+
   function openAddWorkspaceDialog() {
     addWorkspaceError = "";
     showAddWorkspaceDialog = true;
@@ -623,6 +639,7 @@
     onStopSession={(session) => void handleSignalSession(session, "SIGTERM")}
     onForceKillSession={(session) => void handleSignalSession(session, "SIGKILL")}
     onRestartSession={handleRestartSession}
+    onMoveSession={(session, workspaceId) => void handleMoveSession(session, workspaceId)}
     onStartDefaultSession={handleStartDefaultSession}
     onNewSession={() => { newSessionError = ""; newSessionDialogGeneration += 1; showNewSessionDialog = true; }}
     onAddWorkspace={openAddWorkspaceDialog}
