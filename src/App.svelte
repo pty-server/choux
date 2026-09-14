@@ -20,6 +20,7 @@
   import { openExternalUrl } from "./kernel/platform/openUrl";
   import { provideServerRegistry } from "./registry/context";
   import LocalServerDialog from "./features/servers/LocalServerDialog.svelte";
+  import { ptysReleaseWatch } from "./features/servers/ptysReleaseWatch.svelte";
   import SettingsPage from "./features/settings/SettingsPage.svelte";
   import { getTerminalSettings, saveTerminalSettings } from "./kernel/storage/terminalThemeStore";
   import { getGlobalShortcutSettings, saveGlobalShortcutSettings } from "./kernel/storage/globalShortcutStore";
@@ -116,6 +117,7 @@
     let disposed = false;
     let unlisten = () => {};
     const restoreNativeContextMenu = suppressNativeContextMenu();
+    const stopPtysReleaseWatch = ptysReleaseWatch.start();
 
     void (async () => {
       try {
@@ -145,6 +147,7 @@
       disposed = true;
       unlisten();
       restoreNativeContextMenu();
+      stopPtysReleaseWatch();
     };
   });
 

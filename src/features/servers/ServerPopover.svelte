@@ -1,6 +1,8 @@
 <script lang="ts">
   import { useServerRegistry } from "../../registry/context";
   import type { ServerStatus } from "../../registry/types";
+  import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
+  import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
 
   interface Props {
     onClose: () => void;
@@ -46,6 +48,7 @@
       <p class="empty">No servers configured</p>
     {:else}
       {#each registry.servers as conn (conn.config.id)}
+        {@const ptysUpdate = ptysUpdateFor(conn.info?.version, ptysReleaseWatch.latest)}
         <div class="row">
           <button type="button" class="row-main" onclick={() => void registry.setDefault(conn.config.id)}>
             <span class="swatch" style:background={conn.config.accent}></span>
@@ -53,6 +56,9 @@
               <span class="server-details">
               <span>{conn.config.label}</span>
               <span class="url">{conn.config.transport === "local" ? `local instance: ${conn.config.instance}` : conn.config.url}</span>
+              {#if ptysUpdate}
+                <span class="ptys-update" title={`Update with: ${PTYS_UPDATE_COMMAND}`}>ptys {conn.info?.version} → {ptysUpdate} available</span>
+              {/if}
               {#if conn.connectionError}
                 <span class="connection-error" title={conn.connectionError}>{conn.connectionError}</span>
               {/if}
@@ -153,13 +159,16 @@
     gap: 2px;
   }
 
-  .url {
+  .url,
+  .ptys-update {
     overflow: hidden;
     color: var(--fg-dim);
     font-size: 0.75rem;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .ptys-update { color: var(--status-warn); }
 
   .default {
     padding: 2px var(--sp-1);

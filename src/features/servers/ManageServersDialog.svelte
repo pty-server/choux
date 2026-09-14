@@ -1,6 +1,8 @@
 <script lang="ts">
   import { useServerRegistry } from "../../registry/context";
   import { isInsecureRemote } from "./insecureRemote";
+  import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
+  import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
 
   interface Draft {
     label: string;
@@ -14,13 +16,15 @@
     accentPalette: string[];
     clientProtocolVersion: number | undefined;
     focusServerId?: string;
+    copyText: (text: string) => Promise<void>;
     onClose: () => void;
   }
 
-  let { open, accentPalette, clientProtocolVersion, focusServerId, onClose }: Props = $props();
+  let { open, accentPalette, clientProtocolVersion, focusServerId, copyText, onClose }: Props = $props();
   const registry = useServerRegistry();
   let drafts = $state<Record<string, Draft>>(createDrafts());
   let confirmingRemoveId = $state<string>();
+  let copiedUpdateServerId = $state<string>();
   let serverElements = $state<Record<string, HTMLElement>>({});
   let addLabel = $state("");
   let addUrl = $state("");
@@ -62,6 +66,14 @@
   async function remove(id: string) {
     await registry.removeServer(id);
     confirmingRemoveId = undefined;
+  }
+
+  async function copyUpdateCommand(id: string) {
+    await copyText(PTYS_UPDATE_COMMAND);
+    copiedUpdateServerId = id;
+    setTimeout(() => {
+      if (copiedUpdateServerId === id) copiedUpdateServerId = undefined;
+    }, 1500);
   }
 
   function canAdd(): boolean {
@@ -112,6 +124,7 @@
       <div class="server-list">
         {#each registry.servers as conn (conn.config.id)}
           {@const draft = drafts[conn.config.id]}
+          {@const ptysUpdate = ptysUpdateFor(conn.info?.version, ptysReleaseWatch.latest)}
           {#if draft}
             <section class:focused={focusServerId === conn.config.id} class="server" bind:this={serverElements[conn.config.id]}>
               <label>
@@ -155,6 +168,22 @@
                   <span class="mismatch-badge">protocol mismatch (client {clientProtocolVersion}, server {conn.info.protocol})</span>
                 {/if}
               </p>
+
+              <p class="ptys-version">
+                ptys: {conn.info?.version ?? "-"}
+                {#if ptysUpdate}
+                  <span class="update-badge">update available: {ptysUpdate}</span>
+                {/if}
+              </p>
+              {#if ptysUpdate}
+                <div class="update-command">
+                  <p class="hint">Update on the host running this server. It takes effect when ptys restarts.</p>
+                  <div class="command-row">
+                    <code>{PTYS_UPDATE_COMMAND}</code>
+                    <button type="button" class="copy" onclick={() => void copyUpdateCommand(conn.config.id)}>{copiedUpdateServerId === conn.config.id ? "Copied" : "Copy"}</button>
+                  </div>
+                </div>
+              {/if}
 
               <div class="row-actions">
                 <button type="button" class="save" disabled={!isDirty(conn.config.id)} onclick={() => void save(conn.config.id)}>Save</button>
@@ -282,15 +311,27 @@
   .swatch { width: 20px; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
   .swatch.selected { outline: 2px solid var(--fg); outline-offset: 1px; }
 
-  .warning, .protocol, .hint { margin: 0; color: var(--fg-dim); font-size: 0.85rem; }
-  .warning, .mismatch-badge { color: var(--status-warn); }
-  .mismatch-badge { margin-left: var(--sp-2); }
+  .warning, .protocol, .ptys-version, .hint { margin: 0; color: var(--fg-dim); font-size: 0.85rem; }
+  .warning, .mismatch-badge, .update-badge { color: var(--status-warn); }
+  .mismatch-badge, .update-badge { margin-left: var(--sp-2); }
+
+  .update-command { display: flex; flex-direction: column; gap: var(--sp-1); }
+  .command-row { display: flex; align-items: center; gap: var(--sp-2); }
+  .command-row code {
+    flex: 1;
+    padding: var(--sp-1) var(--sp-2);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--fg);
+    font-size: 0.8rem;
+  }
 
   .row-actions, .actions { display: flex; align-items: center; gap: var(--sp-2); justify-content: flex-end; }
   button { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-size: 0.85rem; }
   .save { background: var(--accent); border-color: var(--accent); color: #fff; }
   .save:disabled { opacity: 0.4; cursor: not-allowed; }
-  .cancel { background: var(--bg); color: var(--fg-dim); }
+  .cancel, .copy { background: var(--bg); color: var(--fg-dim); }
   .remove { background: var(--bg); color: var(--status-offline); }
   .confirm-remove { color: var(--fg-dim); font-size: 0.85rem; }
 </style>

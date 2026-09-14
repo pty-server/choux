@@ -327,6 +327,7 @@
     accentPalette={accentPalette}
     clientProtocolVersion={clientProtocolVersion}
     focusServerId={manageFocusServerId}
+    copyText={writeClipboardText}
     onClose={() => { showManageServers = false; manageFocusServerId = undefined; }}
   />
   <QuestionDialog
