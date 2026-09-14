@@ -2,12 +2,14 @@
   import type { Snippet } from "svelte";
   import type { Session } from "@pty-server/protocol";
   import type { SessionDropPosition } from "../../registry/types";
+  import { sessionLocation, sessionState } from "./runnerRow";
 
   interface Props {
     sessions: Session[];
     sortKey?: (session: Session) => number;
     selectedSessionId?: string;
     terminalTitles?: Readonly<Record<string, string>>;
+    runnerRoot?: string;
     onSelect?: (session: Session) => void;
     onRename?: (session: Session) => void;
     onRemove?: (session: Session) => void;
@@ -15,11 +17,19 @@
     sessionExtra?: Snippet<[Session]>;
   }
 
-  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, onSelect, onRename, onRemove, onReorder, sessionExtra }: Props = $props();
+  let { sessions, sortKey = (session) => session.exited?.at ?? session.createdAt, selectedSessionId, terminalTitles = {}, runnerRoot, onSelect, onRename, onRemove, onReorder, sessionExtra }: Props = $props();
   let sortedSessions = $derived(onReorder ? sessions : [...sessions].sort((a, b) => sortKey(b) - sortKey(a)));
   let contextMenu = $state<{ session: Session; x: number; y: number } | undefined>(undefined);
   let draggedSessionId = $state<string | undefined>(undefined);
   let dropTarget = $state<{ sessionId: string; position: SessionDropPosition } | undefined>(undefined);
+  let now = $state(Date.now());
+
+  $effect(() => {
+    if (runnerRoot === undefined) return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), 15_000);
+    return () => clearInterval(timer);
+  });
 
   function title(session: Session): string {
     const value = session.name || [session.cmd, ...session.args].join(" ");
@@ -85,6 +95,7 @@
     <li
       class:clickable={!!onSelect}
       class:current={session.id === selectedSessionId}
+      class:finished={runnerRoot !== undefined && !!session.exited}
       class:dragged={session.id === draggedSessionId}
       class:drop-before={dropTarget?.sessionId === session.id && dropTarget.position === "before"}
       class:drop-after={dropTarget?.sessionId === session.id && dropTarget.position === "after"}
@@ -100,7 +111,9 @@
         <button type="button" class="select" onclick={() => onSelect?.(session)}>
           <span class="session-labels">
             <span class="title">{title(session)}</span>
-            {#if terminalTitles[session.id]}
+            {#if runnerRoot !== undefined}
+              <span class="detail" title={session.cwd}>{sessionLocation(session, runnerRoot)} · {sessionState(session, now)}</span>
+            {:else if terminalTitles[session.id]}
               <span class="terminal-title" title={terminalTitles[session.id]}>{terminalTitles[session.id]}</span>
             {/if}
           </span>
@@ -147,6 +160,10 @@
   li.current {
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  }
+
+  li.finished .select {
+    opacity: 0.6;
   }
 
   li[draggable="true"] {
@@ -200,15 +217,22 @@
   }
 
   .title,
-  .terminal-title {
+  .terminal-title,
+  .detail {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .terminal-title {
+  .terminal-title,
+  .detail {
     color: var(--fg-dim);
     font-size: 0.8rem;
+  }
+
+  .detail {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.72rem;
   }
 
   .status-icon {

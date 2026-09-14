@@ -1,7 +1,7 @@
 <script lang="ts">
   import { workspaceColor } from "./workspaceColor";
   import type { ChromeSlotItem } from "../../registry/types";
-  import type { buildRailModel } from "./railModel";
+  import type { buildRailModel, RailTile } from "./railModel";
 
   interface Props {
     railModel: ReturnType<typeof buildRailModel>;
@@ -24,6 +24,20 @@
   }: Props = $props();
 </script>
 
+{#snippet workspaceTile(tile: RailTile)}
+  <button
+    type="button"
+    class="workspace-tile {tile.serverId === selectedServerId && tile.workspace.id === selectedWorkspaceId ? 'selected' : ''}"
+    style="background: {workspaceColor(tile.workspace.id)}"
+    title={`${tile.workspace.name}${tile.workspace.kind === "runner" ? " (runner)" : ""} - ${tile.serverLabel}`}
+    onclick={() => onSelectWorkspace(tile.serverId, tile.workspace.id)}
+  >
+    <span class="tile-char">{tile.workspace.name.charAt(0).toUpperCase()}</span>
+    {#if tile.workspace.kind === "runner"}<span class="tile-kind-badge" aria-hidden="true">&#9654;</span>{/if}
+    <span class="tile-status-dot" data-status={tile.status}></span>
+  </button>
+{/snippet}
+
 <button
   type="button"
   class="drawer-backdrop"
@@ -36,17 +50,13 @@
       <div class="server-divider" aria-hidden="true"></div>
     {/if}
     {#each group.tiles as tile (tile.key)}
-      <button
-        type="button"
-        class="workspace-tile {tile.serverId === selectedServerId && tile.workspace.id === selectedWorkspaceId ? 'selected' : ''}"
-        style="background: {workspaceColor(tile.workspace.id)}"
-        title={`${tile.workspace.name}${tile.workspace.kind === "runner" ? " (runner)" : ""} - ${tile.serverLabel}`}
-        onclick={() => onSelectWorkspace(tile.serverId, tile.workspace.id)}
-      >
-        <span class="tile-char">{tile.workspace.name.charAt(0).toUpperCase()}</span>
-        {#if tile.workspace.kind === "runner"}<span class="tile-kind-badge" aria-hidden="true">&#9654;</span>{/if}
-        <span class="tile-status-dot" data-status={tile.status}></span>
-      </button>
+      {@render workspaceTile(tile)}
+    {/each}
+    {#if group.tiles.length > 0 && group.runners.length > 0}
+      <div class="kind-divider" aria-hidden="true"></div>
+    {/if}
+    {#each group.runners as tile (tile.key)}
+      {@render workspaceTile(tile)}
     {/each}
   {/each}
   {#each railItems as item (item.id)}
@@ -102,6 +112,13 @@
     height: 1px;
     background: var(--border);
     margin: var(--sp-1) 0;
+    flex-shrink: 0;
+  }
+
+  .kind-divider {
+    width: 16px;
+    border-top: 1px dashed var(--border);
+    margin: 2px 0;
     flex-shrink: 0;
   }
 

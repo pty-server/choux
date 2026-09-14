@@ -155,10 +155,12 @@
 
   let selectedWorkspace = $derived(workspaces.find((w) => w.id === selectedWorkspaceId));
 
+  let selectedIsRunner = $derived(selectedWorkspace?.kind === "runner");
+
   let sortedSessions = $derived(
     [...sessions.filter((s) => s.workspaceId === selectedWorkspaceId)].sort((a, b) => {
-      const ka = a.exited?.at ?? a.createdAt;
-      const kb = b.exited?.at ?? b.createdAt;
+      const ka = selectedIsRunner ? a.createdAt : a.exited?.at ?? a.createdAt;
+      const kb = selectedIsRunner ? b.createdAt : b.exited?.at ?? b.createdAt;
       return kb - ka;
     }),
   );
@@ -166,10 +168,10 @@
     selectedServerId && selectedWorkspaceId ? sessionOrderScope(selectedServerId, selectedWorkspaceId) : undefined,
   );
   let mainSessions = $derived(orderSessions(
-    sortedSessions.filter((session) => session.exited === undefined),
+    selectedIsRunner ? sortedSessions : sortedSessions.filter((session) => session.exited === undefined),
     orderScope ? sessionOrder[orderScope] : undefined,
   ));
-  let foldedSessions = $derived(sortedSessions.filter((session) => session.exited !== undefined));
+  let foldedSessions = $derived(selectedIsRunner ? [] : sortedSessions.filter((session) => session.exited !== undefined));
 
   function reorderSession(movedSessionId: string, targetSessionId: string, position: SessionDropPosition): void {
     if (orderScope === undefined) return;

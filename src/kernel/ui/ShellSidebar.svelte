@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import type { Session, Workspace } from "@pty-server/protocol";
   import SessionList from "../../features/sessions/SessionList.svelte";
+  import { runnerStartCommand } from "../../features/sessions/runnerRow";
   import { defaultSidebarWidth, maxSidebarWidth, minSidebarWidth } from "../storage/sidebarWidthStore";
   import type { ChromeSlotItem, SessionDropPosition } from "../../registry/types";
   import type { SessionProfile } from "../../registry/sessionProfiles";
@@ -54,6 +55,7 @@
 
   let showNewSessionMenu = $state(false);
   let dragging = $state(false);
+  let isRunner = $derived(selectedWorkspace?.kind === "runner");
 
   const keyboardStep = 16;
 
@@ -106,11 +108,29 @@
     <div class="sidebar-header">
       <span class="sidebar-name">
         {selectedWorkspace.name}
-        {#if selectedWorkspace.kind === "runner"}<span class="sidebar-kind">runner</span>{/if}
+        {#if isRunner}<span class="sidebar-kind">runner</span>{/if}
       </span>
       <span class="sidebar-path">{selectedWorkspace.realpath}</span>
     </div>
-    <SessionList sessions={mainSessions} {terminalTitles} {sessionExtra} selectedSessionId={focusedSessionId} onSelect={onSelectSession} onRename={onRenameSession} onReorder={onReorderSession} />
+    <SessionList
+      sessions={mainSessions}
+      {terminalTitles}
+      {sessionExtra}
+      selectedSessionId={focusedSessionId}
+      runnerRoot={isRunner ? selectedWorkspace.realpath : undefined}
+      onSelect={onSelectSession}
+      onRename={onRenameSession}
+      onRemove={isRunner ? onRemoveSession : undefined}
+      onReorder={onReorderSession}
+    />
+    {#if isRunner}
+      {#if mainSessions.length === 0}
+        <div class="runner-hint">
+          <p>No processes yet. Start one from a terminal, for example:</p>
+          <code>{runnerStartCommand(selectedWorkspace.name)}</code>
+        </div>
+      {/if}
+    {:else}
     <div class="new-session-control" title={creationBlocked}>
       <button type="button" class="new-session" disabled={creationBlocked !== undefined} onclick={() => { showNewSessionMenu = false; onStartDefaultSession(); }}>New session</button>
       <button
@@ -135,6 +155,7 @@
         </div>
       {/if}
     </div>
+    {/if}
     {#if foldedSessions.length > 0}
       <details>
         <summary>Recently exited ({foldedSessions.length})</summary>
@@ -241,6 +262,29 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .runner-hint {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+    padding: var(--sp-2);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: var(--fg-dim);
+  }
+
+  .runner-hint p {
+    margin: 0;
+  }
+
+  .runner-hint code {
+    overflow-x: auto;
+    white-space: nowrap;
+    color: var(--fg);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.72rem;
   }
 
   .new-session {
