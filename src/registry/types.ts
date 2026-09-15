@@ -6,7 +6,7 @@
 // this directory sits outside that boundary on purpose (CLIENT.md section 2).
 import type { Component } from "svelte";
 import type { ExecSessionRequest, ExecSessionResponse, ServerInfo, Session, Workspace } from "@pty-server/protocol";
-import type { ServerConfig } from "../kernel/storage/serverConfigStore";
+import type { ServerConfig, ServerInput, ServerPatch } from "../kernel/storage/serverConfigStore";
 
 export interface Command {
   id: string;
@@ -198,11 +198,11 @@ export interface ServerRegistry {
   get(id: string): ServerConn | undefined;
   /** Hydrates from persisted config and (re)starts one controller per server. Safe to call more than once (e.g. after Settings changes a server's URL/token) - it tears down existing controllers first. */
   load(): Promise<void>;
-  addServer(input: { url: string; transport?: "local"; instance?: string; label?: string; token?: string; accent?: string; auth?: "token" | "none"; serverId?: string }): Promise<ServerConn>;
-  /** Adds a server only when its stable identity and normalized URL are both unknown. */
-  ensureServer(input: { url: string; transport?: "local"; instance?: string; label?: string; token?: string; accent?: string; auth?: "token" | "none"; serverId?: string }): Promise<ServerConn>;
-  /** Patches label/accent/url for an existing server; writes a new token only when `patch.token` is non-empty. Reconnects the controller when the url or token changed. */
-  updateServer(id: string, patch: { label?: string; accent?: string; url?: string; token?: string; serverId?: string }): Promise<void>;
+  addServer(input: ServerInput): Promise<ServerConn>;
+  /** Adds a server only when no configured server has the same connection identity. */
+  ensureServer(input: ServerInput): Promise<ServerConn>;
+  /** Patches label/accent/url/transport for an existing server; writes a new token only when `patch.token` is non-empty. Reconnects the controller when the url, token or transport changed. */
+  updateServer(id: string, patch: ServerPatch): Promise<void>;
   removeServer(id: string): Promise<void>;
   setDefault(id: string): Promise<void>;
   /** Forces an immediate poll for one server and resets its poll interval phase. */

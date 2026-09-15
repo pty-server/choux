@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetIndexedDB } from "./setup";
-import { listServers, addServer, getServer, putServer, deleteServer, tokenStore, accentPalette } from "./serverConfigStore";
+import { listServers, addServer, getServer, putServer, deleteServer, tokenStore, accentPalette, updateServer } from "./serverConfigStore";
 import { legacySettingsStoreName, legacySettingsKey, serversStoreName, resetDbMemo } from "./db";
 
 function resetState(): void {
@@ -84,21 +84,59 @@ describe("migration", () => {
     expect(servers).toHaveLength(1);
     expect(servers[0].id).toBe("existing-id");
   });
+
+  it("reads a local record saved before typed transports as a local transport", async () => {
+    await putServer({ id: "legacy-local", label: "Local work", accent: "#000000", url: "http://work.ptys.local", tokenRef: "legacy-local", transport: "local", instance: "work" } as never);
+
+    const [server] = await listServers();
+
+    expect(server.transport).toEqual({ kind: "local", instance: "work" });
+    expect(server).not.toHaveProperty("instance");
+    expect(server.auth).toBe("none");
+  });
+
+  it("keeps an unreadable transport so the server can still be shown and fixed", async () => {
+    await putServer({ id: "broken", label: "Broken", accent: "#000000", url: "http://x.ptys.local", tokenRef: "broken", transport: { kind: "tcp" } } as never);
+
+    expect((await getServer("broken"))?.transport).toEqual({ kind: "tcp" });
+  });
 });
 
 describe("CRUD round-trip", () => {
   it("stores a local instance without a token", async () => {
     const server = await addServer({
-      url: "http://work.ptys.local",
-      transport: "local",
-      instance: "work",
+      url: "http://ignored.test",
+      transport: { kind: "local", instance: "work" },
       label: "Local work",
     });
 
-    expect(server.transport).toBe("local");
-    expect(server.instance).toBe("work");
+    expect(server.transport).toEqual({ kind: "local", instance: "work" });
+    expect(server.url).toBe("http://work.ptys.local");
     expect(server.auth).toBe("none");
     expect(await tokenStore.get(server.tokenRef)).toBeUndefined();
+  });
+
+  it("stores an SSH server with a label named after its host", async () => {
+    const server = await addServer({ url: "", transport: { kind: "ssh", host: "me@box", instance: "default", nodeBin: "/opt/node/bin" } });
+
+    expect(server.label).toBe("me@box");
+    expect((await getServer(server.id))?.transport).toEqual({ kind: "ssh", host: "me@box", instance: "default", nodeBin: "/opt/node/bin" });
+  });
+
+  it("refuses an invalid transport before storing anything", async () => {
+    await expect(addServer({ url: "", transport: { kind: "ssh", host: "-oProxyCommand=x", instance: "default" } })).rejects.toThrow("SSH host");
+    expect(await listServers()).toHaveLength(0);
+  });
+
+  it("changes a native transport and its placeholder URL, but never turns a URL server native", async () => {
+    const ssh = await addServer({ url: "", transport: { kind: "ssh", host: "box", instance: "default" } });
+    const remote = await addServer({ url: "http://one.test", token: "t" });
+
+    const updated = await updateServer(ssh.id, { transport: { kind: "ssh", host: "box", instance: "work" }, url: "http://ignored.test" });
+
+    expect(updated?.transport).toEqual({ kind: "ssh", host: "box", instance: "work" });
+    expect(updated?.url).toBe("http://work.ptys.local");
+    await expect(updateServer(remote.id, { transport: { kind: "local", instance: "default" } })).rejects.toThrow();
   });
 
   it("addServer -> listServers -> getServer -> putServer -> deleteServer", async () => {

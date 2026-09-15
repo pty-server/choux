@@ -6,23 +6,10 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
-    },
-    time::Duration,
-};
+use std::collections::HashMap;
 
-#[cfg(unix)]
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-#[cfg(unix)]
-use futures_util::{SinkExt, StreamExt};
 use keyring::{Entry, Error as KeyringError};
 use serde::Serialize;
-#[cfg(unix)]
-use tauri::Emitter;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -30,27 +17,16 @@ use tauri::{
     AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
-#[cfg(unix)]
-use tokio::sync::mpsc;
-#[cfg(unix)]
-use tokio_tungstenite::{
-    client_async,
-    tungstenite::{client::IntoClientRequest, Message},
-};
 
+mod connection;
 mod locale;
 mod transport;
 
 use locale::user_locale;
 #[cfg(unix)]
-use transport::{
-    http::{HttpConnection, Request},
-    Endpoint,
-};
+use transport::{http::Request, target::valid_instance, Endpoint};
 
 const TOKEN_SERVICE: &str = "ptys-choux";
-#[cfg(unix)]
-const LOCAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const SHOW_MENU_ID: &str = "show";
 const QUIT_MENU_ID: &str = "quit";
 
@@ -293,85 +269,22 @@ fn process_alive(pid: u32) -> bool {
 }
 
 #[cfg(unix)]
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LocalHttpResponse {
-    status: u16,
-    status_text: String,
-    body: String,
-}
-
-#[cfg(unix)]
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LocalSocketEvent {
-    r#type: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
-}
-
-#[cfg(unix)]
-#[derive(Default)]
-struct LocalSocketHub {
-    next_id: AtomicU64,
-    senders: Mutex<HashMap<String, mpsc::UnboundedSender<Message>>>,
-}
-
-#[cfg(unix)]
-async fn local_http_request(
-    endpoint: &Endpoint,
-    path: &str,
-    method: &str,
-    headers: &HashMap<String, String>,
-    body: Option<&str>,
-) -> Result<LocalHttpResponse, String> {
-    let request = Request {
-        method,
-        path,
-        host: "ptys.local",
-        headers,
-        body: body.map(str::as_bytes),
-        keep_alive: false,
-    };
-    let exchange = async {
-        let stream = endpoint
-            .connect()
-            .await
-            .map_err(|error| format!("could not connect to local ptys: {error}"))?;
-        HttpConnection::new(stream)
-            .send(&request)
-            .await
-            .map_err(|error| format!("local ptys request failed: {error}"))
-    };
-    let response = tokio::time::timeout(LOCAL_REQUEST_TIMEOUT, exchange)
-        .await
-        .map_err(|_| {
-            format!(
-                "local ptys did not respond within {}s",
-                LOCAL_REQUEST_TIMEOUT.as_secs()
-            )
-        })??;
-    Ok(LocalHttpResponse {
-        status: response.status,
-        status_text: response.reason,
-        body: String::from_utf8_lossy(&response.body).into_owned(),
-    })
-}
-
-#[cfg(unix)]
 async fn local_daemon_matches(socket_path: &str, pid: u32) -> bool {
     let endpoint = Endpoint::UnixSocket(socket_path.into());
-    let Ok(response) =
-        local_http_request(&endpoint, "/v1/daemon", "GET", &HashMap::new(), None).await
-    else {
+    let headers = HashMap::new();
+    let request = Request {
+        method: "GET",
+        path: "/v1/daemon",
+        host: connection::PTYS_HOST,
+        headers: &headers,
+        body: None,
+        keep_alive: false,
+    };
+    let Ok(response) = connection::local_http_request(&endpoint, &request).await else {
         return false;
     };
     response.status == 200
-        && serde_json::from_str::<serde_json::Value>(&response.body)
+        && serde_json::from_slice::<serde_json::Value>(&response.body)
             .ok()
             .and_then(|value| value.get("pid").and_then(serde_json::Value::as_u64))
             == Some(pid as u64)
@@ -384,12 +297,7 @@ async fn local_daemon_matches(_socket_path: &str, _pid: u32) -> bool {
 
 #[cfg(unix)]
 async fn local_socket_for_instance(instance: &str) -> Result<Endpoint, String> {
-    let valid_instance = !instance.is_empty()
-        && instance.len() <= 64
-        && instance.bytes().enumerate().all(|(index, byte)| {
-            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))
-        });
-    if !valid_instance {
+    if !valid_instance(instance) {
         return Err("Invalid local ptys instance name.".into());
     }
     let run_dir = ptys_dir()
@@ -471,61 +379,6 @@ mod local_server_candidate_tests {
             local_server_candidate(&json!({ "host": "127.0.0.1", "port": 7801 }))
                 .await
                 .is_none()
-        );
-    }
-}
-
-#[cfg(all(test, unix))]
-mod local_http_tests {
-    use super::*;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::UnixListener,
-    };
-
-    #[tokio::test]
-    async fn requests_over_a_unix_socket_without_waiting_for_the_close() {
-        let dir = env::temp_dir().join(format!("choux-local-http-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let socket_path = dir.join("ptys.sock");
-        let _ = fs::remove_file(&socket_path);
-        let listener = UnixListener::bind(&socket_path).unwrap();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                request.push(stream.read_u8().await.unwrap());
-            }
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n7\r\n{\"pid\":\r\n3\r\n42}\r\n0\r\n\r\n")
-                .await
-                .unwrap();
-            (String::from_utf8(request).unwrap(), stream)
-        });
-
-        let response = local_http_request(
-            &Endpoint::UnixSocket(socket_path),
-            "/v1/daemon",
-            "GET",
-            &HashMap::new(),
-            None,
-        )
-        .await
-        .unwrap();
-        let (request, _open_stream) = server.await.unwrap();
-        fs::remove_dir_all(&dir).unwrap();
-
-        assert_eq!(
-            request,
-            "GET /v1/daemon HTTP/1.1\r\nHost: ptys.local\r\nConnection: close\r\n\r\n"
-        );
-        assert_eq!(
-            (
-                response.status,
-                response.status_text.as_str(),
-                response.body.as_str()
-            ),
-            (200, "OK", "{\"pid\":42}")
         );
     }
 }
@@ -651,142 +504,6 @@ fn local_server_start() -> LocalServerCommandResult {
 #[tauri::command(async)]
 fn local_server_home() -> Option<String> {
     home_dir().and_then(|home| home.into_os_string().into_string().ok())
-}
-
-#[cfg(unix)]
-#[tauri::command]
-async fn local_server_request(
-    instance: String,
-    path: String,
-    method: Option<String>,
-    headers: Option<HashMap<String, String>>,
-    body: Option<String>,
-) -> Result<LocalHttpResponse, String> {
-    let endpoint = local_socket_for_instance(&instance).await?;
-    local_http_request(
-        &endpoint,
-        &path,
-        method.as_deref().unwrap_or("GET"),
-        &headers.unwrap_or_default(),
-        body.as_deref(),
-    )
-    .await
-}
-
-#[cfg(unix)]
-#[tauri::command]
-async fn local_socket_open(
-    app: AppHandle,
-    hub: tauri::State<'_, LocalSocketHub>,
-    instance: String,
-    path: String,
-    protocols: Vec<String>,
-    channel: String,
-) -> Result<String, String> {
-    if !path.starts_with('/') {
-        return Err("invalid local ptys WebSocket path".into());
-    }
-    let endpoint = local_socket_for_instance(&instance).await?;
-    let connection_id = format!("local-{}", hub.next_id.fetch_add(1, Ordering::Relaxed));
-    let (sender, mut receiver) = mpsc::unbounded_channel::<Message>();
-    hub.senders
-        .lock()
-        .map_err(|_| "Local socket state is unavailable.")?
-        .insert(connection_id.clone(), sender);
-    let task_connection_id = connection_id.clone();
-    tauri::async_runtime::spawn(async move {
-        let result: Result<(), String> = async {
-            let stream = endpoint.connect().await.map_err(|error| error.to_string())?;
-            let mut request = format!("ws://{instance}.ptys.local{path}").into_client_request().map_err(|error| error.to_string())?;
-            if !protocols.is_empty() {
-                request.headers_mut().insert("Sec-WebSocket-Protocol", protocols.join(", ").parse().map_err(|_| "invalid WebSocket protocol")?);
-            }
-            let (socket, _) = client_async(request, stream).await.map_err(|error| error.to_string())?;
-            app.emit(&channel, LocalSocketEvent { r#type: "open", data: None, code: None, reason: None }).map_err(|error| error.to_string())?;
-            let (mut write, mut read) = socket.split();
-            loop {
-                tokio::select! {
-                    outgoing = receiver.recv() => match outgoing {
-                        Some(message) => write.send(message).await.map_err(|error| error.to_string())?,
-                        None => break,
-                    },
-                    incoming = read.next() => match incoming {
-                        Some(Ok(Message::Text(text))) => { let _ = app.emit(&channel, LocalSocketEvent { r#type: "text", data: Some(text.to_string()), code: None, reason: None }); }
-                        Some(Ok(Message::Binary(data))) => { let _ = app.emit(&channel, LocalSocketEvent { r#type: "binary", data: Some(BASE64.encode(data)), code: None, reason: None }); }
-                        Some(Ok(Message::Close(frame))) => { let (code, reason) = frame.map(|f| (Some(f.code.into()), Some(f.reason.to_string()))).unwrap_or((Some(1000), None)); let _ = app.emit(&channel, LocalSocketEvent { r#type: "close", data: None, code, reason }); break; }
-                        Some(Ok(_)) => {}
-                        Some(Err(error)) => return Err(error.to_string()),
-                        None => { let _ = app.emit(&channel, LocalSocketEvent { r#type: "close", data: None, code: Some(1006), reason: None }); break; }
-                    }
-                }
-            }
-            Ok(())
-        }.await;
-        if let Err(error) = result {
-            let _ = app.emit(
-                &channel,
-                LocalSocketEvent {
-                    r#type: "error",
-                    data: Some(error),
-                    code: None,
-                    reason: None,
-                },
-            );
-        }
-        if let Ok(mut senders) = app.state::<LocalSocketHub>().senders.lock() {
-            senders.remove(&task_connection_id);
-        }
-    });
-    Ok(connection_id)
-}
-
-#[cfg(unix)]
-#[tauri::command]
-fn local_socket_send(
-    hub: tauri::State<'_, LocalSocketHub>,
-    connection_id: String,
-    text: Option<String>,
-    binary: Option<String>,
-) -> Result<(), String> {
-    let message = match (text, binary) {
-        (Some(text), None) => Message::Text(text.into()),
-        (None, Some(binary)) => Message::Binary(
-            BASE64
-                .decode(binary)
-                .map_err(|_| "invalid binary WebSocket frame")?
-                .into(),
-        ),
-        _ => return Err("exactly one WebSocket frame payload is required".into()),
-    };
-    let senders = hub
-        .senders
-        .lock()
-        .map_err(|_| "Local socket state is unavailable.")?;
-    senders
-        .get(&connection_id)
-        .ok_or("Local socket is closed.")?
-        .send(message)
-        .map_err(|_| "Local socket is closed.".into())
-}
-
-#[cfg(unix)]
-#[tauri::command]
-fn local_socket_close(
-    hub: tauri::State<'_, LocalSocketHub>,
-    connection_id: String,
-    code: Option<u16>,
-    reason: Option<String>,
-) {
-    if let Ok(mut senders) = hub.senders.lock() {
-        if let Some(sender) = senders.remove(&connection_id) {
-            let _ = sender.send(Message::Close(code.map(|code| {
-                tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                    code: code.into(),
-                    reason: reason.unwrap_or_default().into(),
-                }
-            })));
-        }
-    }
 }
 
 fn valid_token_ref(token_ref: &str) -> bool {
@@ -993,11 +710,7 @@ fn app_bundle_read_only() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default();
-    #[cfg(unix)]
-    {
-        builder = builder.manage(LocalSocketHub::default());
-    }
+    let mut builder = tauri::Builder::default().manage(connection::ConnectionHub::default());
 
     // Linux opens a protocol activation in a new process. This plugin forwards
     // it to the existing window and exits the new process instead.
@@ -1065,10 +778,12 @@ pub fn run() {
             local_server_install,
             local_server_start,
             local_server_home,
-            local_server_request,
-            local_socket_open,
-            local_socket_send,
-            local_socket_close,
+            connection::ptys_request,
+            connection::ptys_transport_retain,
+            connection::ptys_transport_release,
+            connection::ptys_socket_open,
+            connection::ptys_socket_send,
+            connection::ptys_socket_close,
             app_bundle_read_only,
         ])
         .run(tauri::generate_context!())

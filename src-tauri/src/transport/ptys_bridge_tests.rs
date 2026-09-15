@@ -25,6 +25,7 @@ use super::{
     bridge::CommandSpec,
     http::Request,
     pool::{Connector, HttpPool, Lane, PoolError},
+    target::{Route, Target},
     Endpoint,
 };
 
@@ -152,6 +153,27 @@ impl Drop for PtysServer {
     }
 }
 
+struct ScratchDirectory(PathBuf);
+
+impl Drop for ScratchDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn write_script(path: &Path, body: &str) {
+    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn node_executable() -> String {
+    let output = std::process::Command::new("sh")
+        .args(["-c", "command -v node"])
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
 fn request<'a>(
     method: &'a str,
     path: &'a str,
@@ -253,6 +275,46 @@ async fn reaches_a_restarted_server_on_a_new_bridge() {
 
     assert_ne!(before["pid"], after["pid"]);
     assert_eq!(pool.connections_opened(), 2);
+}
+
+#[tokio::test]
+#[ignore = "needs a built ../ptys checkout; run through npm run test:integration"]
+async fn reaches_a_server_through_the_exact_ssh_preset_command() {
+    let server = PtysServer::start().await;
+    let shims = ScratchDirectory(private_directory("shims"));
+    write_script(
+        &shims.0.join("ssh"),
+        "while [ \"$1\" != -- ]; do shift; done\nshift 2\nexec sh -c \"$1\"",
+    );
+    let unset: String = PTYS_ENVIRONMENT
+        .iter()
+        .map(|name| format!("-u {name} "))
+        .collect();
+    write_script(
+        &shims.0.join("ptys"),
+        &format!(
+            "exec env {unset}HOME='{}' PTYS_SOCKET_DIR='{}' '{}' '{}' \"$@\"",
+            server.home.display(),
+            server.sockets.display(),
+            node_executable(),
+            server.cli.display(),
+        ),
+    );
+    let target = Target::Ssh {
+        host: "me@box".into(),
+        instance: "default".into(),
+        node_bin: Some(shims.0.to_str().unwrap().into()),
+    };
+    let Ok(Route::Bridge(mut spec)) = target.route() else {
+        panic!("the SSH preset did not build a bridge");
+    };
+    let mut path = OsString::from(&shims.0);
+    path.push(":");
+    path.push(env::var_os("PATH").unwrap_or_default());
+    spec.env.push(("PATH".into(), path));
+    let pool = HttpPool::new(Endpoint::Command(spec), DEADLINE);
+
+    assert!(get_json(&pool, "/v1/info").await["protocol"].is_u64());
 }
 
 #[tokio::test]

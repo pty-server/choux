@@ -18,6 +18,7 @@ use super::pool::LinkFailure;
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct CommandSpec {
     pub program: OsString,
     pub args: Vec<OsString>,

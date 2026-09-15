@@ -9,9 +9,10 @@ use std::{
     time::Duration,
 };
 
+use serde::Deserialize;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::Mutex,
+    sync::{Mutex, Notify},
     time::Instant,
 };
 
@@ -40,7 +41,8 @@ pub struct LinkFailure {
     pub permanent: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Lane {
     Shared,
     Dedicated,
@@ -49,6 +51,7 @@ pub enum Lane {
 #[derive(Debug)]
 pub enum PoolError {
     Busy,
+    Closed,
     TimedOut(Duration),
     Connect(io::Error),
     Unavailable(LinkFailure),
@@ -63,6 +66,7 @@ impl fmt::Display for PoolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Busy => formatter.write_str("too many requests are waiting for this server"),
+            Self::Closed => formatter.write_str("the connection was closed"),
             Self::TimedOut(deadline) => write!(
                 formatter,
                 "the server did not respond within {}s",
@@ -94,6 +98,8 @@ pub struct HttpPool<C: Connector> {
     waiting: AtomicUsize,
     opened: AtomicUsize,
     deadline: Duration,
+    closed: AtomicBool,
+    closing: Notify,
 }
 
 impl<C: Connector> HttpPool<C> {
@@ -108,11 +114,32 @@ impl<C: Connector> HttpPool<C> {
             waiting: AtomicUsize::new(0),
             opened: AtomicUsize::new(0),
             deadline,
+            closed: AtomicBool::new(false),
+            closing: Notify::new(),
         }
     }
 
+    #[cfg(test)]
     pub fn connections_opened(&self) -> usize {
         self.opened.load(Ordering::Relaxed)
+    }
+
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.closing.notify_waiters();
+    }
+
+    #[cfg(test)]
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    fn check_open(&self) -> Result<(), PoolError> {
+        if self.closed.load(Ordering::SeqCst) {
+            Err(PoolError::Closed)
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn request(&self, request: &Request<'_>, lane: Lane) -> Result<Response, PoolError> {
@@ -120,6 +147,8 @@ impl<C: Connector> HttpPool<C> {
             error,
             diagnosis: None,
         })?;
+        let closing = self.closing.notified();
+        self.check_open()?;
         let _slot = match lane {
             Lane::Shared => Some(QueueSlot::take(&self.waiting)?),
             Lane::Dedicated => None,
@@ -143,12 +172,21 @@ impl<C: Connector> HttpPool<C> {
                 }
             }
         };
-        match tokio::time::timeout(self.deadline, exchange).await {
-            Ok(result) => result,
-            Err(_) if sent.load(Ordering::SeqCst) && !is_idempotent(request.method) => Err(
-                PoolError::OutcomeUnknown(PoolError::TimedOut(self.deadline).to_string()),
-            ),
-            Err(_) => Err(PoolError::TimedOut(self.deadline)),
+        let may_have_applied = || sent.load(Ordering::SeqCst) && !is_idempotent(request.method);
+        tokio::select! {
+            biased;
+            () = closing => Err(if may_have_applied() {
+                PoolError::OutcomeUnknown(PoolError::Closed.to_string())
+            } else {
+                PoolError::Closed
+            }),
+            finished = tokio::time::timeout(self.deadline, exchange) => match finished {
+                Ok(result) => result,
+                Err(_) if may_have_applied() => Err(PoolError::OutcomeUnknown(
+                    PoolError::TimedOut(self.deadline).to_string(),
+                )),
+                Err(_) => Err(PoolError::TimedOut(self.deadline)),
+            },
         }
     }
 
@@ -158,6 +196,7 @@ impl<C: Connector> HttpPool<C> {
         sent: &AtomicBool,
     ) -> Result<Response, PoolError> {
         let mut shared = self.shared.lock().await;
+        self.check_open()?;
         self.check_available()?;
         if let Some(mut connection) = shared.take_reusable() {
             match send_tracked(&mut connection, &request, sent).await {
@@ -178,6 +217,7 @@ impl<C: Connector> HttpPool<C> {
         request: Request<'_>,
         sent: &AtomicBool,
     ) -> Result<Response, PoolError> {
+        self.check_open()?;
         self.check_available()?;
         let mut connection = HttpConnection::new(self.open().await?);
         match send_tracked(&mut connection, &request, sent).await {
@@ -710,6 +750,72 @@ mod tests {
             ),
             "{response:?}"
         );
+        assert_eq!(pool.connections_opened(), 0);
+    }
+
+    fn spawn_request(
+        pool: &Arc<HttpPool<FakeConnector>>,
+        method: &'static str,
+        lane: Lane,
+    ) -> tokio::task::JoinHandle<Result<Response, PoolError>> {
+        let pool = Arc::clone(pool);
+        tokio::spawn(async move {
+            let headers = HashMap::new();
+            pool.request(&request(method, &headers), lane).await
+        })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closing_abandons_the_active_request_and_never_sends_the_queued_one() {
+        let pool = Arc::new(pool(Duration::from_secs(15)));
+        let mut stuck = pool.connector.link();
+        let _never_opened = pool.connector.link();
+
+        let active = spawn_request(&pool, "GET", Lane::Shared);
+        let head = read_head(&mut stuck).await;
+        let queued = spawn_request(&pool, "POST", Lane::Shared);
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        pool.close();
+
+        let active = active.await.unwrap();
+        let queued = queued.await.unwrap();
+        assert!(matches!(active, Err(PoolError::Closed)), "{active:?}");
+        assert!(matches!(queued, Err(PoolError::Closed)), "{queued:?}");
+        assert!(head.starts_with("GET "), "{head}");
+        assert!(stuck.read_u8().await.is_err());
+        assert_eq!(pool.connections_opened(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closing_reports_an_unknown_outcome_for_a_mutation_already_sent() {
+        for lane in [Lane::Shared, Lane::Dedicated] {
+            let pool = Arc::new(pool(Duration::from_secs(15)));
+            let mut server = pool.connector.link();
+
+            let pending = spawn_request(&pool, "POST", lane);
+            read_head(&mut server).await;
+            pool.close();
+            let response = pending.await.unwrap();
+
+            assert!(
+                outcome_unknown_because(&response, "connection was closed"),
+                "{lane:?} {response:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refuses_every_request_once_closed() {
+        let pool = pool(Duration::from_secs(15));
+        let _unused = pool.connector.link();
+        pool.close();
+        let headers = HashMap::new();
+
+        for lane in [Lane::Shared, Lane::Dedicated] {
+            let response = pool.request(&request("POST", &headers), lane).await;
+            assert!(matches!(response, Err(PoolError::Closed)), "{response:?}");
+        }
+        assert!(pool.is_closed());
         assert_eq!(pool.connections_opened(), 0);
     }
 }

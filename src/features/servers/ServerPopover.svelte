@@ -1,5 +1,6 @@
 <script lang="ts">
   import { useServerRegistry } from "../../registry/context";
+  import { serverAddressSummary } from "../../registry/serverTransport";
   import type { ServerStatus } from "../../registry/types";
   import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
   import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
@@ -55,7 +56,7 @@
             <span class:online={statusDot(conn.status) === "online"} class:warn={statusDot(conn.status) === "warn"} class:offline={statusDot(conn.status) === "offline"} class="dot"></span>
               <span class="server-details">
               <span>{conn.config.label}</span>
-              <span class="url">{conn.config.transport === "local" ? `local instance: ${conn.config.instance}` : conn.config.url}</span>
+              <span class="url">{serverAddressSummary(conn.config)}</span>
               {#if ptysUpdate}
                 <span class="ptys-update" title={`Update with: ${PTYS_UPDATE_COMMAND}`}>ptys {conn.info?.version} → {ptysUpdate} available</span>
               {/if}

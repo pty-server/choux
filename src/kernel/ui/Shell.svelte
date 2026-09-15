@@ -56,6 +56,7 @@
     onLayoutChange?: () => void;
     /** accelerator -> commandId */
     keybindings?: Readonly<Record<string, string>>;
+    nativeTransports?: boolean;
     topBar?: Snippet;
     pane?: Snippet;
   }
@@ -89,6 +90,7 @@
     onToggleSettings,
     onLayoutChange,
     keybindings = {},
+    nativeTransports = false,
     topBar,
     pane,
   }: Props = $props();
@@ -327,6 +329,7 @@
     accentPalette={accentPalette}
     clientProtocolVersion={clientProtocolVersion}
     focusServerId={manageFocusServerId}
+    {nativeTransports}
     copyText={writeClipboardText}
     onClose={() => { showManageServers = false; manageFocusServerId = undefined; }}
   />

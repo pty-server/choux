@@ -129,4 +129,32 @@ describe("EventStreamController", () => {
     await vi.advanceTimersByTimeAsync(8000);
     expect(createSocket).toHaveBeenCalledTimes(2);
   });
+
+  it("reports a reconnect when a replacement socket opens, but not the first open", async () => {
+    vi.useFakeTimers();
+    const sockets: MockEventSocket[] = [];
+    const onReconnect = vi.fn();
+    new EventStreamController({
+      baseUrl: "http://example.test",
+      createSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      onEvent: () => {},
+      onReconnect,
+      random: () => 0,
+    });
+
+    sockets[0]?.onopen?.();
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    sockets[0]?.onclose?.({ code: 1006, reason: "dropped" });
+    await vi.advanceTimersByTimeAsync(250);
+    sockets[1]?.onopen?.();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    sockets[1]?.onmessage?.({ data: "{}" });
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
 });

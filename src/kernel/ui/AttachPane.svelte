@@ -10,7 +10,8 @@
   import type { AttachExitInfo } from "../transport/attach";
   import { untrack } from "svelte";
   import type { TerminalTheme } from "../../registry/terminalTheme";
-  import { localPtysSocket } from "../transport/localPtys";
+  import { nativeSocketFactory } from "../transport/nativeTransport";
+  import type { ServerTransport } from "../../registry/serverTransport";
   import { readClipboardText, writeClipboardText } from "../platform/clipboard";
   import { openExternalUrl } from "../platform/openUrl";
   import {
@@ -32,7 +33,7 @@
 
   interface Props {
     baseUrl: string;
-    localInstance?: string;
+    native?: ServerTransport;
     token?: string;
     sessionId: string;
     serverId?: string;
@@ -47,7 +48,7 @@
     onProtocolMismatch?: (serverProtocol: number) => void;
   }
 
-  let { baseUrl, localInstance, token, sessionId, serverId, readonly, lossy, theme, fontSize, copyOnSelect = false, layoutRevision, onDims, onConnectionState, onProtocolMismatch }: Props = $props();
+  let { baseUrl, native, token, sessionId, serverId, readonly, lossy, theme, fontSize, copyOnSelect = false, layoutRevision, onDims, onConnectionState, onProtocolMismatch }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state(undefined);
   let terminal: Terminal | undefined = $state(undefined);
@@ -273,13 +274,7 @@
         lossy,
         clientProtocolVersion: PROTOCOL_VERSION,
         terminal: term,
-        createSocket: (url, protocols) => {
-          if (localInstance) {
-            const target = new URL(url);
-            return localPtysSocket(localInstance, `${target.pathname}${target.search}`, protocols);
-          }
-          return new WebSocket(url, protocols);
-        },
+        createSocket: native === undefined ? (url, protocols) => new WebSocket(url, protocols) : nativeSocketFactory(native),
         onReady: (dims) => {
           cols = dims.cols;
           rows = dims.rows;

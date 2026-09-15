@@ -1,11 +1,10 @@
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod bridge;
 pub mod http;
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod pool;
 #[cfg(all(test, unix))]
 mod ptys_bridge_tests;
 pub mod response;
+pub mod target;
 
 use std::{
     future::Future,
@@ -22,7 +21,6 @@ use pool::{Connector, Link, LinkFailure};
 pub enum Endpoint {
     #[cfg(unix)]
     UnixSocket(std::path::PathBuf),
-    #[cfg_attr(not(test), allow(dead_code))]
     Command(CommandSpec),
 }
 

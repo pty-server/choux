@@ -36,6 +36,14 @@ Download the `.deb` or `.AppImage` from [Releases](https://github.com/pty-server
 
 Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root.
 
+## Connecting to ptys
+
+Choux reaches a ptys server in one of three ways, managed under **Manage servers**:
+
+- **Local.** On launch the desktop app finds the ptys daemons running as your user and connects through each daemon's private Unix control socket, with no token. If none is running, Choux offers to install and start ptys.
+- **URL.** Any ptys server listening on HTTP(S), with its bearer token, or without one for a server started with authentication disabled. This is the only option in the browser build.
+- **SSH** (desktop app only). Choux runs `ssh <host> ptys bridge --instance <name>` and talks to the remote daemon through that pipe, so nothing has to listen on the network and no token is needed. The remote host needs ptys 0.3.0 or newer with its daemon running, and key or agent authentication with a known host key: ssh runs non-interactively, so password and host-key prompts cannot be answered. When `ptys` is not on the remote non-interactive `PATH`, as with nvm, set the node bin directory, for example `/home/me/.nvm/versions/node/v24.21.0/bin`.
+
 ## Platform targets
 
 | Platform | Architecture | Format |
@@ -53,7 +61,7 @@ Windows is not yet supported - local ptys discovery uses a Unix control socket.
 
 ## Ptys dependency note
 
-`@pty-server/protocol` and `@pty-server/ptys` (devDependency) come from npm, both pinned to the `next` dist-tag while ptys is in prerelease. `npm install` is all the setup a fresh clone needs; the pinned versions are recorded in `package-lock.json`. Move them to a stable semver range once ptys publishes a non-prerelease release.
+`@pty-server/protocol` and `@pty-server/ptys` (devDependency) come from npm, both on `^0.3.0`. `npm install` is all the setup a fresh clone needs; the resolved versions are recorded in `package-lock.json`. A caret on a `0.x` version locks the minor, so each new ptys minor release needs an explicit bump here.
 
 ## Dev loop
 

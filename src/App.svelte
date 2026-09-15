@@ -1,6 +1,6 @@
 <script lang="ts">
   import { PROTOCOL_VERSION, type DirectoryListing, type Session, type WorkspaceKind } from "@pty-server/protocol";
-  import { createApiClient, describeConnectionFailure } from "./kernel/transport/api";
+  import { createApiClient, describeConnectionFailure, serverApiConfig } from "./kernel/transport/api";
   import { createServerRegistry } from "./kernel/servers/serverRegistry.svelte";
   import { gateSessionRequest, gateWorkspaceRequest } from "./kernel/servers/creationRequests";
   import { openHomeProject } from "./kernel/servers/localAutostart";
@@ -13,9 +13,10 @@
   import { measureViewport } from "./kernel/ui/viewport";
   import { tokenStore } from "./kernel/storage/serverConfigStore";
   import { serverUsesToken } from "./kernel/storage/serverConfigStore";
-  import { initializeTokenStore } from "./kernel/storage/tokenStore";
-  import { getLocalServerBridge, localServerEndpoint, type LocalServerBridge, type LocalServerTool } from "./kernel/platform/localServer";
-  import { listenForSessionDeepLinks, type SessionDeepLink } from "./kernel/platform/deepLink";
+  import { initializeTokenStore, isTauriRuntime } from "./kernel/storage/tokenStore";
+  import { getLocalServerBridge, type LocalServerBridge, type LocalServerTool } from "./kernel/platform/localServer";
+  import { listenForSessionDeepLinks, serverForDeepLink, type SessionDeepLink } from "./kernel/platform/deepLink";
+  import { nativeServerUrl, serverAddressKey, type ServerTransport } from "./registry/serverTransport";
   import { writeClipboardText } from "./kernel/platform/clipboard";
   import { openExternalUrl } from "./kernel/platform/openUrl";
   import { provideServerRegistry } from "./registry/context";
@@ -388,10 +389,7 @@
   }
 
   function handleSessionDeepLink(link: SessionDeepLink) {
-    // A link may carry either the stable /v1/info identity or this install's
-    // local config id, which is a per-install UUID.
-    const target = registry.servers.find((server) => server.config.serverId === link.serverId)
-      ?? registry.get(link.serverId);
+    const target = serverForDeepLink(registry.servers, link);
     if (!target) {
       showError("This link refers to a server that is not configured in Choux.", "deep-link");
       return;
@@ -474,7 +472,7 @@
   }
 
   function apiFor(config: import("./kernel/storage/serverConfigStore").ServerConfig, token: string | undefined) {
-    return createApiClient({ baseUrl: config.url, token, ...(config.transport === "local" && config.instance ? { localInstance: config.instance } : {}) });
+    return createApiClient(serverApiConfig(config, token));
   }
 
   async function getServerToken(config: import("./kernel/storage/serverConfigStore").ServerConfig): Promise<string | undefined> {
@@ -494,13 +492,13 @@
 
     const connectedServerIds: string[] = [];
     for (const candidate of candidates) {
-      const url = localServerEndpoint(candidate.instance);
+      const transport: ServerTransport = { kind: "local", instance: candidate.instance };
+      const url = nativeServerUrl(transport);
       try {
-        const info = await createApiClient({ baseUrl: url, localInstance: candidate.instance }).getInfo();
+        const info = await createApiClient({ baseUrl: url, native: transport }).getInfo();
         const connection = await registry.ensureServer({
           url,
-          transport: "local",
-          instance: candidate.instance,
+          transport,
           label: `Local ${candidate.instance}`,
           auth: "none",
           serverId: info.serverId,
@@ -557,7 +555,7 @@
         const connectedServerIds = await discoverLocalServers();
         const startedServerId = connectedServerIds.find((id) => {
           const config = registry.get(id)?.config;
-          return config?.transport === "local" && config.instance !== undefined && !knownInstances.has(config.instance);
+          return config?.transport?.kind === "local" && !knownInstances.has(config.transport.instance);
         });
         if (startedServerId) {
           await openLocalHomeProject(startedServerId, bridge);
@@ -656,6 +654,7 @@
     onToggleSettings={() => settingsOpen = !settingsOpen}
     onLayoutChange={() => layoutRevision += 1}
     keybindings={keybindingsByAccelerator(resolvedKeybindings)}
+    nativeTransports={isTauriRuntime()}
   >
     {#snippet pane()}
       {#if settingsOpen}
@@ -684,10 +683,10 @@
       {:else}
         <div class="attach-container" bind:this={mainContainer}>
           {#if focusedSessionId && conn && canAttach(resolvedCredential, conn.config)}
-            {#key focusedSessionId}
+            {#key `${focusedSessionId} ${conn.config.id} ${serverAddressKey(conn.config)}`}
               <AttachPane
                 baseUrl={conn.config.url}
-                localInstance={conn.config.transport === "local" ? conn.config.instance : undefined}
+                native={conn.config.transport}
                 token={resolvedToken}
                 sessionId={focusedSessionId}
                 serverId={conn.config.id}

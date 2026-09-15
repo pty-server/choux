@@ -46,7 +46,8 @@ describe("canAttach", () => {
 
   it("attaches straight away when the server takes no token", () => {
     expect(canAttach(undefined, serverConfig({ auth: "none" }))).toBe(true);
-    expect(canAttach(undefined, serverConfig({ transport: "local", instance: "default" }))).toBe(true);
+    expect(canAttach(undefined, serverConfig({ transport: { kind: "local", instance: "default" } }))).toBe(true);
+    expect(canAttach(undefined, serverConfig({ transport: { kind: "ssh", host: "box", instance: "default" } }))).toBe(true);
   });
 
   it("cannot attach without a server", () => {

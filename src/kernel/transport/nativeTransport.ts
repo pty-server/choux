@@ -1,14 +1,17 @@
 import { isTauriRuntime, type TauriInvoke } from "../storage/tokenStore";
+import type { ServerTransport } from "../../registry/serverTransport";
 import type { AttachSocket } from "./attach";
 import type { EventSocket } from "./events";
 
-export interface LocalHttpResponse {
+export interface NativeHttpResponse {
   status: number;
   statusText: string;
   body: string;
 }
 
-interface LocalSocketEvent {
+export type RequestLane = "shared" | "dedicated";
+
+interface NativeSocketEvent {
   type: "open" | "text" | "binary" | "close" | "error";
   data?: string;
   code?: number;
@@ -16,28 +19,42 @@ interface LocalSocketEvent {
 }
 
 function eventId(): string {
-  return `ptys-local-${crypto.randomUUID()}`;
+  return `ptys-native-${crypto.randomUUID()}`;
+}
+
+function plainTarget(target: ServerTransport): ServerTransport {
+  return { ...target };
 }
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauriRuntime()) throw new Error("Local ptys sockets are available only in the desktop app.");
+  if (!isTauriRuntime()) throw new Error("Native ptys connections are available only in the desktop app.");
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
   return (tauriInvoke as TauriInvoke)<T>(command, args);
 }
 
-/** Performs one HTTP request over a verified ptys control socket. */
-export async function localPtysRequest(
-  instance: string,
+export async function nativeRequest(
+  target: ServerTransport,
   path: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string } = {},
-): Promise<LocalHttpResponse> {
-  return invoke<LocalHttpResponse>("local_server_request", {
-    instance,
+  init: { method?: string; headers?: Record<string, string>; body?: string; lane?: RequestLane } = {},
+): Promise<NativeHttpResponse> {
+  return invoke<NativeHttpResponse>("ptys_request", {
+    target: plainTarget(target),
     path,
     method: init.method,
     headers: init.headers,
     body: init.body,
+    lane: init.lane,
   });
+}
+
+export async function retainNativeTransport(target: ServerTransport): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("ptys_transport_retain", { target: plainTarget(target) });
+}
+
+export async function releaseNativeTransport(target: ServerTransport): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke("ptys_transport_release", { target: plainTarget(target) });
 }
 
 function base64ToArrayBuffer(value: string): ArrayBuffer {
@@ -56,8 +73,7 @@ function bytesToBase64(value: ArrayBufferLike | ArrayBufferView): string {
   return btoa(binary);
 }
 
-/** Browser-WebSocket-shaped adapter backed by a native Unix-socket WebSocket. */
-export class LocalPtysSocket implements AttachSocket, EventSocket {
+export class NativeSocket implements AttachSocket, EventSocket {
   readyState = 0;
   binaryType = "arraybuffer";
   onopen: (() => void) | null = null;
@@ -69,14 +85,14 @@ export class LocalPtysSocket implements AttachSocket, EventSocket {
   private closed = false;
   private unlisten: (() => void) | undefined;
 
-  constructor(instance: string, path: string, protocols: string[]) {
-    void this.open(instance, path, protocols);
+  constructor(target: ServerTransport, path: string, protocols: string[]) {
+    void this.open(plainTarget(target), path, protocols);
   }
 
   send(data: string | ArrayBufferLike | ArrayBufferView): void {
     if (this.connectionId === undefined || this.readyState !== 1) return;
     const payload = typeof data === "string" ? { text: data } : { binary: bytesToBase64(data) };
-    void invoke("local_socket_send", { connectionId: this.connectionId, ...payload }).catch((error) => this.fail(error));
+    void invoke("ptys_socket_send", { connectionId: this.connectionId, ...payload }).catch((error) => this.fail(error));
   }
 
   close(code?: number, reason?: string): void {
@@ -86,23 +102,23 @@ export class LocalPtysSocket implements AttachSocket, EventSocket {
     this.unlisten?.();
     this.unlisten = undefined;
     if (this.connectionId !== undefined) {
-      void invoke("local_socket_close", { connectionId: this.connectionId, code, reason });
+      void invoke("ptys_socket_close", { connectionId: this.connectionId, code, reason });
     }
   }
 
-  private async open(instance: string, path: string, protocols: string[]): Promise<void> {
+  private async open(target: ServerTransport, path: string, protocols: string[]): Promise<void> {
     try {
       const { listen } = await import("@tauri-apps/api/event");
       const channel = eventId();
-      const unlisten = await listen<LocalSocketEvent>(channel, (event) => this.handle(event.payload));
+      const unlisten = await listen<NativeSocketEvent>(channel, (event) => this.handle(event.payload));
       if (this.closed) {
         unlisten();
         return;
       }
       this.unlisten = unlisten;
-      const connectionId = await invoke<string>("local_socket_open", { instance, path, protocols, channel });
+      const connectionId = await invoke<string>("ptys_socket_open", { target, path, protocols, channel });
       if (this.closed) {
-        void invoke("local_socket_close", { connectionId });
+        void invoke("ptys_socket_close", { connectionId });
         return;
       }
       this.connectionId = connectionId;
@@ -111,7 +127,7 @@ export class LocalPtysSocket implements AttachSocket, EventSocket {
     }
   }
 
-  private handle(event: LocalSocketEvent): void {
+  private handle(event: NativeSocketEvent): void {
     if (this.closed && event.type !== "close") return;
     switch (event.type) {
       case "open":
@@ -132,7 +148,7 @@ export class LocalPtysSocket implements AttachSocket, EventSocket {
         this.onclose?.({ code: event.code ?? 1006, reason: event.reason ?? "" });
         return;
       case "error":
-        this.fail(event.data ?? "Local ptys socket failed.");
+        this.fail(event.data ?? "The ptys connection failed.");
     }
   }
 
@@ -143,6 +159,9 @@ export class LocalPtysSocket implements AttachSocket, EventSocket {
   }
 }
 
-export function localPtysSocket(instance: string, path: string, protocols: string[]): LocalPtysSocket {
-  return new LocalPtysSocket(instance, path, protocols);
+export function nativeSocketFactory(target: ServerTransport): (url: string, protocols: string[]) => NativeSocket {
+  return (url, protocols) => {
+    const { pathname, search } = new URL(url);
+    return new NativeSocket(target, `${pathname}${search}`, protocols);
+  };
 }

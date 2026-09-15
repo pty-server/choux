@@ -1,8 +1,8 @@
 import { PROTOCOL_VERSION, type EventControl, type ExecSessionRequest, type ExecSessionResponse, type Session } from "@pty-server/protocol";
 import { SvelteMap } from "svelte/reactivity";
-import { ApiError, createApiClient, describeConnectionFailure } from "../transport/api";
+import { ApiError, createApiClient, describeConnectionFailure, serverApiConfig, type ApiClientConfig } from "../transport/api";
 import { EventStreamController } from "../transport/events";
-import { localPtysSocket } from "../transport/localPtys";
+import { nativeSocketFactory, releaseNativeTransport, retainNativeTransport } from "../transport/nativeTransport";
 import type { EventSocket, EventSocketFactory } from "../transport/events";
 import { protocolMismatch } from "../transport/protocolVersion";
 import {
@@ -19,6 +19,7 @@ import {
 import { tokenStore } from "../storage/tokenStore";
 import { agentStateKey, agentStatePane } from "../../registry/agentStateKey";
 import { incompatibleServerMessage } from "../../registry/protocolSupport";
+import { connectionIdentity, sameTransport, serverAddressProblem, type ServerTransport } from "../../registry/serverTransport";
 import { isAgentStateData, reduceAgentState, sweepAgentStates, type AgentStateData } from "./agentState";
 import type {
   PendingQuestion,
@@ -188,9 +189,11 @@ function isQuestionData(value: unknown): value is QuestionData {
 
 export interface ServerRegistryDeps {
   /** Defaults to createApiClient from ./api. Injectable for tests. */
-  createClient?: (config: { baseUrl: string; token?: string; localInstance?: string }) => ReturnType<typeof createApiClient>;
+  createClient?: (config: ApiClientConfig) => ReturnType<typeof createApiClient>;
   /** Defaults to the browser WebSocket constructor. Injectable for tests. */
   createEventSocket?: EventSocketFactory;
+  retainNative?: (transport: ServerTransport) => Promise<void>;
+  releaseNative?: (transport: ServerTransport) => void;
   questionsEnabled?: () => boolean;
   onAttention?: (target: AttentionTarget) => void;
   pollIntervalMs?: number;
@@ -217,6 +220,8 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- Controller handles are non-reactive bookkeeping.
   const controllers = new Map<string, Controller>();
   const createClient = deps.createClient ?? createApiClient;
+  const retainNative = deps.retainNative ?? ((transport: ServerTransport) => retainNativeTransport(transport).catch(() => {}));
+  const releaseNative = deps.releaseNative ?? ((transport: ServerTransport) => void releaseNativeTransport(transport).catch(() => {}));
   const createEventSocket: EventSocketFactory | undefined = deps.createEventSocket ?? (
     typeof window === "undefined"
       ? undefined
@@ -231,18 +236,6 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
   const questionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let defaultServerId = $state<string | undefined>(undefined);
   let loadGeneration = 0;
-
-  const normalizedUrl = (url: string): string => {
-    try {
-      const parsed = new URL(url);
-      parsed.pathname = "/";
-      parsed.search = "";
-      parsed.hash = "";
-      return parsed.toString();
-    } catch {
-      return url;
-    }
-  };
 
   const removeQuestion = (id: string): void => {
     const timer = questionTimers.get(id);
@@ -306,6 +299,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     let stopped = false;
     let interval: ReturnType<typeof setInterval> | undefined;
     let eventStream: EventStreamController | undefined;
+    let retained: ServerTransport | undefined;
     let sessionEventRevision = 0;
 
     const sessionLabel = (sessionId: string): string => {
@@ -428,23 +422,15 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
 
     const openEventStream = (): void => {
       if (stopped || eventStream !== undefined) return;
-      if (config.transport === "local" && config.instance) {
-        eventStream = new EventStreamController({
-          baseUrl: config.url,
-          createSocket: (url, protocols) => {
-            const target = new URL(url);
-            return localPtysSocket(config.instance!, `${target.pathname}${target.search}`, protocols);
-          },
-          onEvent: handleEvent,
-        });
-      } else if (createEventSocket !== undefined) {
-        eventStream = new EventStreamController({
-          baseUrl: config.url,
-          token,
-          createSocket: createEventSocket,
-          onEvent: handleEvent,
-        });
-      }
+      const createSocket = config.transport === undefined ? createEventSocket : nativeSocketFactory(config.transport);
+      if (createSocket === undefined) return;
+      eventStream = new EventStreamController({
+        baseUrl: config.url,
+        token,
+        createSocket,
+        onEvent: handleEvent,
+        onReconnect: () => void poll(),
+      });
     };
 
     const closeEventStream = (): void => {
@@ -516,6 +502,10 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       stop() {
         stopped = true;
         closeEventStream();
+        if (retained !== undefined) {
+          releaseNative(retained);
+          retained = undefined;
+        }
         if (interval !== undefined) {
           clearInterval(interval);
           interval = undefined;
@@ -538,7 +528,22 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     };
     controllers.set(config.id, controller);
 
+    const addressProblem = serverAddressProblem(config);
+    if (addressProblem !== undefined) {
+      conn.status = "offline";
+      conn.connectionError = `Invalid connection settings: ${addressProblem}`;
+      return;
+    }
+
     void (async () => {
+      if (config.transport !== undefined) {
+        await retainNative(config.transport);
+        if (stopped) {
+          releaseNative(config.transport);
+          return;
+        }
+        retained = config.transport;
+      }
       if (serverUsesToken(config)) {
         try {
           token = await tokenStore.get(config.tokenRef);
@@ -556,7 +561,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         return;
       }
       conn.storageError = undefined;
-      client = createClient({ baseUrl: config.url, token, ...(config.transport === "local" && config.instance ? { localInstance: config.instance } : {}) });
+      client = createClient(serverApiConfig(config, token));
       await poll();
       if (stopped) return;
       restartInterval();
@@ -604,11 +609,8 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       return conns.get(config.id)!;
     },
     async ensureServer(input) {
-      const known = [...conns.values()].find((conn) =>
-        (input.serverId !== undefined && conn.config.serverId === input.serverId)
-        || (input.transport === "local" && conn.config.transport === "local" && conn.config.instance === input.instance)
-        || (input.transport !== "local" && normalizedUrl(conn.config.url) === normalizedUrl(input.url)),
-      );
+      const identity = connectionIdentity(input);
+      const known = [...conns.values()].find((conn) => connectionIdentity(conn.config) === identity);
       if (known) {
         controllers.get(known.config.id)?.refresh();
         return known;
@@ -618,10 +620,11 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     async updateServer(id, patch) {
       const existing = await getServer(id);
       if (!existing) return;
-      await persistUpdateServer(id, patch);
-      const updatedConfig = await getServer(id);
+      const updatedConfig = await persistUpdateServer(id, patch);
       if (!updatedConfig) return;
-      const reconnect = patch.url !== undefined || Boolean(patch.token);
+      const wasInvalid = serverAddressProblem(existing) !== undefined;
+      const transportChanged = !sameTransport(existing.transport, updatedConfig.transport);
+      const reconnect = patch.url !== undefined || Boolean(patch.token) || transportChanged || wasInvalid;
       if (reconnect) {
         controllers.get(id)?.stop();
         controllers.delete(id);

@@ -4,7 +4,7 @@ import { ApiError, createApiClient } from "../transport/api";
 import { resetDbMemo } from "../storage/db";
 import { AGENT_WAITING_STALE_MS } from "./agentState";
 import { createServerRegistry } from "./serverRegistry.svelte";
-import { addServer, tokenStore } from "../storage/serverConfigStore";
+import { addServer, putServer, tokenStore } from "../storage/serverConfigStore";
 import { resetIndexedDB } from "../storage/setup";
 import type { EventSocket } from "../transport/events";
 
@@ -787,6 +787,64 @@ describe("server registry event stream", () => {
   });
 });
 
+describe("server registry ensureServer", () => {
+  it("keeps two local instances apart even though they share one server identity", async () => {
+    const registry = createServerRegistry({ createClient: () => clientWith(), pollIntervalMs: 1000 });
+    const local = (instance: string) => ({
+      url: `http://${instance}.ptys.local`,
+      transport: { kind: "local", instance } as const,
+      auth: "none" as const,
+      serverId: "same-home",
+    });
+
+    const first = await registry.ensureServer(local("default"));
+    const second = await registry.ensureServer(local("work"));
+    const again = await registry.ensureServer(local("work"));
+
+    expect(second.config.id).not.toBe(first.config.id);
+    expect(again.config.id).toBe(second.config.id);
+    expect(registry.servers).toHaveLength(2);
+  });
+
+  it("does not merge a local instance into a URL server with the same server identity", async () => {
+    const registry = createServerRegistry({ createClient: () => clientWith(), pollIntervalMs: 1000 });
+    await registry.addServer({ url: "http://127.0.0.1:7801", auth: "none", serverId: "same-home" });
+
+    await registry.ensureServer({ url: "http://default.ptys.local", transport: { kind: "local", instance: "default" }, serverId: "same-home" });
+    const byUrl = await registry.ensureServer({ url: "http://127.0.0.1:7801/", auth: "none" });
+
+    expect(registry.servers).toHaveLength(2);
+    expect(byUrl.config.transport).toBeUndefined();
+  });
+});
+
+describe("server registry event reconciliation", () => {
+  it("polls as soon as the event stream reconnects", async () => {
+    const sockets: MockEventSocket[] = [];
+    const client = clientWith();
+    const registry = createServerRegistry({
+      createClient: () => client,
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      pollIntervalMs: 60_000,
+    });
+    await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+    sockets[0]?.onopen?.();
+    expect(client.getSessions).toHaveBeenCalledTimes(1);
+
+    sockets[0]?.onclose?.({ code: 1006, reason: "dropped" });
+    await vi.waitFor(() => expect(sockets).toHaveLength(2), { timeout: 2000 });
+    sockets[1]?.onopen?.();
+    await settle();
+
+    expect(client.getSessions).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("server registry lifecycle", () => {
   it("hydrates one controller per stored server", async () => {
     await addServer({ url: "http://one.test", token: "one" });
@@ -883,6 +941,98 @@ describe("server registry lifecycle", () => {
     expect(registry.get(conn.config.id)?.config.label).toBe("Original");
     expect(registry.get(conn.config.id)?.config.url).toBe("http://one.test");
     expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the new transport and releases the old one when a native transport changes", async () => {
+    const createClient = vi.fn(() => clientWith());
+    const retainNative = vi.fn().mockResolvedValue(undefined);
+    const releaseNative = vi.fn();
+    const registry = createServerRegistry({ createClient, retainNative, releaseNative, pollIntervalMs: 1000 });
+    const transport = { kind: "ssh", host: "box", instance: "default" } as const;
+    const conn = await registry.addServer({ url: "", transport });
+    await settle();
+    expect(retainNative).toHaveBeenCalledWith(transport);
+
+    await registry.updateServer(conn.config.id, { label: "Box", transport: { ...transport } });
+    await settle();
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(releaseNative).not.toHaveBeenCalled();
+
+    await registry.updateServer(conn.config.id, { transport: { ...transport, nodeBin: "/opt/node/bin" } });
+    await settle();
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(createClient).toHaveBeenLastCalledWith({
+      baseUrl: "http://default.ptys.local",
+      token: undefined,
+      native: { ...transport, nodeBin: "/opt/node/bin" },
+    });
+    expect(releaseNative).toHaveBeenCalledTimes(1);
+    expect(releaseNative).toHaveBeenCalledWith(transport);
+    expect(retainNative).toHaveBeenLastCalledWith({ ...transport, nodeBin: "/opt/node/bin" });
+  });
+
+  it("releases the transport of a removed native server", async () => {
+    const releaseNative = vi.fn();
+    const registry = createServerRegistry({ createClient: () => clientWith(), releaseNative, pollIntervalMs: 1000 });
+    const transport = { kind: "ssh", host: "box", instance: "default" } as const;
+    const conn = await registry.addServer({ url: "", transport });
+    await settle();
+
+    await registry.removeServer(conn.config.id);
+
+    expect(releaseNative).toHaveBeenCalledTimes(1);
+    expect(releaseNative).toHaveBeenCalledWith(transport);
+  });
+
+  it("gives back a transport whose retain finished only after the server was removed", async () => {
+    let finishRetain: () => void = () => {};
+    const retainNative = vi.fn(() => new Promise<void>((resolve) => { finishRetain = resolve; }));
+    const releaseNative = vi.fn();
+    const createClient = vi.fn(() => clientWith());
+    const registry = createServerRegistry({ createClient, retainNative, releaseNative, pollIntervalMs: 1000 });
+    const transport = { kind: "ssh", host: "box", instance: "default" } as const;
+    const conn = await registry.addServer({ url: "", transport });
+
+    await registry.removeServer(conn.config.id);
+    expect(releaseNative).not.toHaveBeenCalled();
+    finishRetain();
+    await settle();
+
+    expect(releaseNative).toHaveBeenCalledTimes(1);
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("shows a stored server with invalid connection settings without connecting to it", async () => {
+    await putServer({ id: "broken", label: "Broken", accent: "#000000", url: "http://x.ptys.local", tokenRef: "broken", transport: { kind: "ssh", host: "-oProxyCommand=x", instance: "default" } } as never);
+    const createClient = vi.fn(() => clientWith());
+    const retainNative = vi.fn().mockResolvedValue(undefined);
+    const registry = createServerRegistry({ createClient, retainNative, pollIntervalMs: 1000 });
+
+    await registry.load();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const conn = registry.get("broken");
+    expect(conn?.status).toBe("offline");
+    expect(conn?.connectionError).toMatch(/^Invalid connection settings: .*SSH host/);
+    expect(createClient).not.toHaveBeenCalled();
+    expect(retainNative).not.toHaveBeenCalled();
+    await expect(registry.execSession("broken", "s1", { cmd: "true" })).rejects.toThrow("not connected");
+  });
+
+  it("connects a stored server once its invalid settings are repaired, even to an equal-looking transport", async () => {
+    await putServer({ id: "repair", label: "Box", accent: "#000000", url: "http://default.ptys.local", tokenRef: "repair", transport: { kind: "ssh", host: "box", instance: "default", nodeBin: "" } } as never);
+    const createClient = vi.fn(() => clientWith());
+    const registry = createServerRegistry({ createClient, pollIntervalMs: 1000 });
+    await registry.load();
+    await settle();
+    expect(registry.get("repair")?.status).toBe("offline");
+
+    await registry.updateServer("repair", { label: "Box", transport: { kind: "ssh", host: "box", instance: "default" } });
+    await settle();
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(registry.get("repair")?.status).toBe("online");
+    expect(registry.get("repair")?.connectionError).toBeUndefined();
   });
 
   it("is a no-op for an unknown server id", async () => {

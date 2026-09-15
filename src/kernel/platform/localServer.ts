@@ -43,8 +43,3 @@ export async function getLocalServerBridge(): Promise<LocalServerBridge | undefi
     home: async () => (await call<string | null>("local_server_home")) ?? undefined,
   };
 }
-
-/** A stable placeholder URL for code paths that require a URL but use native transport. */
-export function localServerEndpoint(instance: string): string {
-  return `http://${instance}.ptys.local`;
-}

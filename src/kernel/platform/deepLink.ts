@@ -3,6 +3,20 @@ export interface SessionDeepLink {
   sessionId: string;
 }
 
+export interface DeepLinkCandidate {
+  readonly config: { readonly id: string; readonly serverId?: string };
+  readonly status: string;
+  readonly sessions: readonly { readonly id: string }[];
+}
+
+export function serverForDeepLink<T extends DeepLinkCandidate>(servers: readonly T[], link: SessionDeepLink): T | undefined {
+  const sharing = servers.filter((server) => server.config.serverId === link.serverId);
+  return sharing.find((server) => server.sessions.some((session) => session.id === link.sessionId))
+    ?? sharing.find((server) => server.status === "online")
+    ?? sharing[0]
+    ?? servers.find((server) => server.config.id === link.serverId);
+}
+
 /** Parse the only supported public deep-link shape. */
 export function parseSessionDeepLink(value: string): SessionDeepLink | undefined {
   let url: URL;

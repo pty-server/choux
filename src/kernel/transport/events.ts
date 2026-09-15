@@ -20,6 +20,7 @@ export interface EventStreamOptions {
   token?: string;
   createSocket: EventSocketFactory;
   onEvent: (event: EventControl) => void;
+  onReconnect?: () => void;
   random?: () => number;
 }
 
@@ -124,7 +125,9 @@ export class EventStreamController {
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket || this.closed) return;
+      const reconnected = this.reconnectAttempt > 0;
       this.reconnectAttempt = 0;
+      if (reconnected) this.options.onReconnect?.();
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket || this.closed) return;

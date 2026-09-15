@@ -1,14 +1,17 @@
 <script lang="ts">
   import { useServerRegistry } from "../../registry/context";
+  import { nativeServerUrl, sameTransport, transportKind, validTransport } from "../../registry/serverTransport";
   import { isInsecureRemote } from "./insecureRemote";
   import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
   import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
+  import { emptySshFields, sshFields, sshProblem, sshTransport, type SshFields } from "./sshDraft";
 
   interface Draft {
     label: string;
     accent: string;
     url: string;
     token: string;
+    ssh: SshFields;
   }
 
   interface Props {
@@ -16,18 +19,21 @@
     accentPalette: string[];
     clientProtocolVersion: number | undefined;
     focusServerId?: string;
+    nativeTransports?: boolean;
     copyText: (text: string) => Promise<void>;
     onClose: () => void;
   }
 
-  let { open, accentPalette, clientProtocolVersion, focusServerId, copyText, onClose }: Props = $props();
+  let { open, accentPalette, clientProtocolVersion, focusServerId, nativeTransports = false, copyText, onClose }: Props = $props();
   const registry = useServerRegistry();
   let drafts = $state<Record<string, Draft>>(createDrafts());
   let confirmingRemoveId = $state<string>();
   let copiedUpdateServerId = $state<string>();
   let serverElements = $state<Record<string, HTMLElement>>({});
   let addLabel = $state("");
+  let addKind = $state<"url" | "ssh">("url");
   let addUrl = $state("");
+  let addSsh = $state<SshFields>(emptySshFields());
   let addToken = $state("");
   let addAuth = $state<"token" | "none">("token");
   let addAccent = $state("");
@@ -38,27 +44,37 @@
       accent: conn.config.accent,
       url: conn.config.url,
       token: "",
+      ssh: sshFields(conn.config.transport),
     }]));
   }
 
   function isDirty(id: string): boolean {
     const conn = registry.get(id);
     const draft = drafts[id];
-    return !!conn && !!draft && (
-      draft.label !== conn.config.label || draft.accent !== conn.config.accent
-      || (conn.config.transport !== "local" && (draft.url !== conn.config.url || draft.token !== ""))
-    );
+    if (!conn || !draft) return false;
+    const transport = conn.config.transport;
+    return draft.label !== conn.config.label || draft.accent !== conn.config.accent
+      || (transport === undefined && (draft.url !== conn.config.url || draft.token !== ""))
+      || (transportKind(transport) === "ssh" && !sameTransport(transport, sshTransport(draft.ssh)));
+  }
+
+  function canSave(id: string): boolean {
+    const draft = drafts[id];
+    const isSsh = transportKind(registry.get(id)?.config.transport) === "ssh";
+    return isDirty(id) && !!draft && (!isSsh || sshProblem(draft.ssh) === undefined);
   }
 
   async function save(id: string) {
     const draft = drafts[id];
-    if (!draft || !isDirty(id)) return;
+    if (!draft || !canSave(id)) return;
     const conn = registry.get(id);
     if (!conn) return;
+    const transport = conn.config.transport;
     await registry.updateServer(id, {
       label: draft.label,
       accent: draft.accent,
-      ...(conn.config.transport === "local" ? {} : { url: draft.url, token: draft.token || undefined }),
+      ...(transport === undefined ? { url: draft.url, token: draft.token || undefined } : {}),
+      ...(transportKind(transport) === "ssh" ? { transport: sshTransport(draft.ssh) } : {}),
     });
     draft.token = "";
   }
@@ -77,20 +93,32 @@
   }
 
   function canAdd(): boolean {
+    if (addKind === "ssh") return sshProblem(addSsh) === undefined;
     return !!addUrl && (addAuth === "none" || !!addToken);
   }
 
   async function addServer() {
     if (!canAdd()) return;
-    await registry.addServer({
-      url: addUrl,
-      label: addLabel || undefined,
-      auth: addAuth,
-      token: addAuth === "token" ? addToken : undefined,
-      accent: addAccent || undefined,
-    });
+    if (addKind === "ssh") {
+      const transport = sshTransport(addSsh);
+      await registry.addServer({
+        url: nativeServerUrl(transport),
+        transport,
+        label: addLabel || undefined,
+        accent: addAccent || undefined,
+      });
+    } else {
+      await registry.addServer({
+        url: addUrl,
+        label: addLabel || undefined,
+        auth: addAuth,
+        token: addAuth === "token" ? addToken : undefined,
+        accent: addAccent || undefined,
+      });
+    }
     addLabel = "";
     addUrl = "";
+    addSsh = emptySshFields();
     addToken = "";
     addAuth = "token";
     addAccent = accentPalette[registry.servers.length % accentPalette.length] ?? "";
@@ -116,6 +144,25 @@
   });
 </script>
 
+{#snippet sshInputs(fields: SshFields)}
+  <label>
+    SSH host
+    <input type="text" bind:value={fields.host} placeholder="user@host or an ssh config alias" />
+  </label>
+  <label>
+    ptys instance
+    <input type="text" bind:value={fields.instance} />
+  </label>
+  <label>
+    Node bin directory
+    <input type="text" bind:value={fields.nodeBin} placeholder="Optional, e.g. /home/me/.nvm/versions/node/v24.21.0/bin" />
+  </label>
+  {#if fields.host.trim() !== "" && sshProblem(fields)}
+    <p class="warning">⚠ {sshProblem(fields)}</p>
+  {/if}
+  <p class="hint">Choux runs <code>ssh {fields.host.trim() || "host"} ptys bridge</code> without a terminal, so the host needs key or agent authentication and a known host key. Password prompts are not supported. Set the node bin directory when <code>ptys</code> is not on the non-interactive PATH, as with nvm.</p>
+{/snippet}
+
 {#if open}
   <div class="overlay" role="presentation" onclick={onClose} onkeydown={(e) => e.key === "Escape" && onClose()}>
     <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && onClose()}>
@@ -125,6 +172,9 @@
         {#each registry.servers as conn (conn.config.id)}
           {@const draft = drafts[conn.config.id]}
           {@const ptysUpdate = ptysUpdateFor(conn.info?.version, ptysReleaseWatch.latest)}
+          {@const transport = conn.config.transport}
+          {@const kind = transportKind(transport)}
+          {@const valid = validTransport(transport)}
           {#if draft}
             <section class:focused={focusServerId === conn.config.id} class="server" bind:this={serverElements[conn.config.id]}>
               <label>
@@ -141,9 +191,7 @@
                 </div>
               </div>
 
-              {#if conn.config.transport === "local"}
-                <p class="local-instance">Local ptys instance: <code>{conn.config.instance}</code>. It uses its private control socket and does not need a token.</p>
-              {:else}
+              {#if transport === undefined}
                 <label>
                   URL
                   <input type="text" bind:value={draft.url} />
@@ -160,6 +208,14 @@
                     <input type="password" bind:value={draft.token} placeholder="Leave blank to keep the current token" />
                   </label>
                 {/if}
+              {:else if kind === "ssh"}
+                {@render sshInputs(draft.ssh)}
+              {:else if valid?.kind === "local"}
+                <p class="native-connection">Local ptys instance: <code>{valid.instance}</code>. It uses its private control socket and does not need a token.</p>
+              {:else if valid?.kind === "wsl"}
+                <p class="native-connection">WSL distribution <code>{valid.distro}</code> as <code>{valid.user}</code>, ptys instance <code>{valid.instance}</code>.</p>
+              {:else}
+                <p class="warning">⚠ Choux cannot read this server's connection settings. Remove it and add it again.</p>
               {/if}
 
               <p class="protocol">
@@ -186,7 +242,7 @@
               {/if}
 
               <div class="row-actions">
-                <button type="button" class="save" disabled={!isDirty(conn.config.id)} onclick={() => void save(conn.config.id)}>Save</button>
+                <button type="button" class="save" disabled={!canSave(conn.config.id)} onclick={() => void save(conn.config.id)}>Save</button>
                 {#if confirmingRemoveId === conn.config.id}
                   <span class="confirm-remove">Really remove? <button type="button" class="remove" onclick={() => void remove(conn.config.id)}>Yes</button> <button type="button" onclick={() => confirmingRemoveId = undefined}>No</button></span>
                 {:else}
@@ -204,12 +260,25 @@
           Label
           <input type="text" bind:value={addLabel} />
         </label>
-        <label>
-          URL
-          <input type="text" bind:value={addUrl} />
-        </label>
-        {#if isInsecureRemote(addUrl)}
-          <p class="warning">⚠ Insecure: plaintext connection to a non-loopback host. Use https/wss or a loopback address.</p>
+        {#if nativeTransports}
+          <label>
+            Connection
+            <select bind:value={addKind}>
+              <option value="url">URL</option>
+              <option value="ssh">SSH</option>
+            </select>
+          </label>
+        {/if}
+        {#if addKind === "ssh" && nativeTransports}
+          {@render sshInputs(addSsh)}
+        {:else}
+          <label>
+            URL
+            <input type="text" bind:value={addUrl} />
+          </label>
+          {#if isInsecureRemote(addUrl)}
+            <p class="warning">⚠ Insecure: plaintext connection to a non-loopback host. Use https/wss or a loopback address.</p>
+          {/if}
         {/if}
         <div class="field">
           <span>Accent</span>
@@ -219,20 +288,22 @@
             {/each}
           </div>
         </div>
-        <label>
-          Authentication
-          <select bind:value={addAuth}>
-            <option value="token">Bearer token</option>
-            <option value="none">None</option>
-          </select>
-        </label>
-        {#if addAuth === "token"}
+        {#if addKind === "url" || !nativeTransports}
           <label>
-            Token
-            <input type="password" bind:value={addToken} />
+            Authentication
+            <select bind:value={addAuth}>
+              <option value="token">Bearer token</option>
+              <option value="none">None</option>
+            </select>
           </label>
-        {:else}
-          <p class="hint">The server must be running with authentication disabled.</p>
+          {#if addAuth === "token"}
+            <label>
+              Token
+              <input type="password" bind:value={addToken} />
+            </label>
+          {:else}
+            <p class="hint">The server must be running with authentication disabled.</p>
+          {/if}
         {/if}
         <div class="actions">
           <button type="button" class="cancel" onclick={onClose}>Close</button>
@@ -284,7 +355,7 @@
     border-radius: 4px;
   }
 
-  .local-instance { margin: 0; color: var(--fg-dim); line-height: 1.45; }
+  .native-connection { margin: 0; color: var(--fg-dim); line-height: 1.45; }
 
   .server.focused { border-color: var(--accent); }
 
@@ -312,6 +383,7 @@
   .swatch.selected { outline: 2px solid var(--fg); outline-offset: 1px; }
 
   .warning, .protocol, .ptys-version, .hint { margin: 0; color: var(--fg-dim); font-size: 0.85rem; }
+  .hint { line-height: 1.45; }
   .warning, .mismatch-badge, .update-badge { color: var(--status-warn); }
   .mismatch-badge, .update-badge { margin-left: var(--sp-2); }
 

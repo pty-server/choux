@@ -8,15 +8,19 @@ import {
   type ServerInfo,
   type Session,
 } from "@pty-server/protocol";
-import { localPtysRequest } from "./localPtys";
+import type { ServerAddress, ServerTransport } from "../../registry/serverTransport";
+import { nativeRequest, type RequestLane } from "./nativeTransport";
 
 export interface ApiClientConfig {
   baseUrl: string;
-  /** Selects the native control-socket transport for a local ptys instance. */
-  localInstance?: string;
+  native?: ServerTransport;
   /** Omitted only for a loopback server explicitly started with --no-auth. */
   token?: string;
   headers?: Record<string, string>;
+}
+
+export function serverApiConfig(server: ServerAddress, token: string | undefined): ApiClientConfig {
+  return { baseUrl: server.url, token, ...(server.transport === undefined ? {} : { native: server.transport }) };
 }
 
 export interface CreateSessionBody {
@@ -57,7 +61,7 @@ export function describeConnectionFailure(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "The connection failed for an unknown reason.";
 }
 
-export function createApiClient({ baseUrl, localInstance, token, headers = {} }: ApiClientConfig) {
+export function createApiClient({ baseUrl, native, token, headers = {} }: ApiClientConfig) {
   const base = baseUrl.replace(/\/$/, "");
   const authHeaders: Record<string, string> = token === undefined ? {} : { Authorization: `Bearer ${token}` };
 
@@ -75,8 +79,8 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
   }
 
   async function request<T>(path: string): Promise<T> {
-    if (localInstance !== undefined) {
-      const response = await localPtysRequest(localInstance, path, { headers });
+    if (native !== undefined) {
+      const response = await nativeRequest(native, path, { headers });
       if (response.status < 200 || response.status >= 300) throw new ApiError(response.body || response.statusText, response.status);
       return JSON.parse(response.body) as T;
     }
@@ -87,12 +91,13 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     return response.json() as Promise<T>;
   }
 
-  async function requestJson<T>(path: string, body: unknown, method = "POST"): Promise<T> {
-    if (localInstance !== undefined) {
-      const response = await localPtysRequest(localInstance, path, {
+  async function requestJson<T>(path: string, body: unknown, method = "POST", lane: RequestLane = "shared"): Promise<T> {
+    if (native !== undefined) {
+      const response = await nativeRequest(native, path, {
         method,
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify(body),
+        lane,
       });
       if (response.status < 200 || response.status >= 300) throw new ApiError(response.body || response.statusText, response.status);
       return JSON.parse(response.body) as T;
@@ -109,8 +114,8 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
   async function requestEmpty(path: string, method: string, body?: unknown): Promise<void> {
     const bodyHeaders: Record<string, string> = body === undefined ? {} : { "content-type": "application/json" };
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    if (localInstance !== undefined) {
-      const response = await localPtysRequest(localInstance, path, { method, headers: { ...headers, ...bodyHeaders }, body: payload });
+    if (native !== undefined) {
+      const response = await nativeRequest(native, path, { method, headers: { ...headers, ...bodyHeaders }, body: payload });
       if (response.status < 200 || response.status >= 300) throw new ApiError(response.body || response.statusText, response.status);
       return;
     }
@@ -146,6 +151,8 @@ export function createApiClient({ baseUrl, localInstance, token, headers = {} }:
     execSession: (id: string, body: ExecSessionRequest) => requestJson<ExecSessionResponse>(
       `/v1/sessions/${encodeURIComponent(id)}/exec`,
       body,
+      "POST",
+      "dedicated",
     ),
   };
 }

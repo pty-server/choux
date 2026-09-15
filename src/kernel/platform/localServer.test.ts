@@ -1,15 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getLocalServerBridge, localServerEndpoint } from "./localServer";
+import { getLocalServerBridge } from "./localServer";
 
 const invoke = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-
-describe("localServerEndpoint", () => {
-  it("keeps an instance in a URL-shaped placeholder for native transport", () => {
-    expect(localServerEndpoint("work.dev")).toBe("http://work.dev.ptys.local");
-  });
-});
 
 describe("getLocalServerBridge home", () => {
   beforeEach(() => {

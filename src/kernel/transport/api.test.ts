@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createApiClient } from "./api";
+import { createApiClient, serverApiConfig } from "./api";
+
+const { nativeRequest } = vi.hoisted(() => ({ nativeRequest: vi.fn() }));
+
+vi.mock("./nativeTransport", () => ({ nativeRequest }));
 
 function respondWith(body: unknown) {
   const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify(body), { status: 200 }));
@@ -11,6 +15,7 @@ const legacyWorkspace = { id: "w1", path: "/src/shop/", realpath: "/src/shop", c
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  nativeRequest.mockReset();
 });
 
 describe("createApiClient workspaces", () => {
@@ -81,5 +86,33 @@ describe("createApiClient session control", () => {
     expect(fetch.mock.calls[0][0]).toBe("http://server.test/v1/sessions/s%201");
     expect(fetch.mock.calls[0][1].method).toBe("PATCH");
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ workspaceId: "w 2" });
+  });
+});
+
+describe("createApiClient native transport", () => {
+  const ssh = { kind: "ssh", host: "box", instance: "default" } as const;
+
+  it("selects the native transport from a server's config and never fetches", async () => {
+    const fetch = respondWith([]);
+    nativeRequest.mockResolvedValue({ status: 200, statusText: "OK", body: "[]" });
+    const client = createApiClient(serverApiConfig({ url: "http://default.ptys.local", transport: ssh }, undefined));
+
+    await expect(client.getSessions()).resolves.toEqual([]);
+
+    expect(nativeRequest).toHaveBeenCalledWith(ssh, "/v1/sessions", { headers: {} });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a long-running exec off the shared connection", async () => {
+    nativeRequest.mockResolvedValue({ status: 200, statusText: "OK", body: "{\"code\":0}" });
+    const client = createApiClient({ baseUrl: "http://default.ptys.local", native: ssh });
+
+    await client.execSession("s1", { cmd: "sleep", args: ["2"] });
+
+    expect(nativeRequest.mock.calls[0][2]).toMatchObject({ method: "POST", lane: "dedicated" });
+  });
+
+  it("uses HTTP for a server without a transport", () => {
+    expect(serverApiConfig({ url: "http://server.test" }, "t")).toEqual({ baseUrl: "http://server.test", token: "t" });
   });
 });
