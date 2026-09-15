@@ -15,6 +15,7 @@ mod local_server;
 #[cfg(unix)]
 mod locale;
 mod transport;
+mod wsl;
 
 const TOKEN_SERVICE: &str = "ptys-choux";
 const SHOW_MENU_ID: &str = "show";
@@ -292,6 +293,13 @@ pub fn run() {
             local_server::local_server_install,
             local_server::local_server_start,
             local_server::local_server_home,
+            wsl::wsl_supported,
+            wsl::wsl_status,
+            wsl::wsl_probe,
+            wsl::wsl_candidates,
+            wsl::wsl_install,
+            wsl::wsl_start,
+            wsl::wsl_home,
             connection::ptys_request,
             connection::ptys_transport_retain,
             connection::ptys_transport_release,

@@ -6,7 +6,7 @@ const WSL_SERVICE_FAILURE: i32 = -1;
 const WSL_ERROR_CODE: &str = "Error code: ";
 const WSL_RELAY_PREFIX: &str = "<3>WSL (";
 const WSL_RELAY_ERROR: &str = ") ERROR: ";
-const WSL_LAUNCH_FAILURE: &str = "execvpe(";
+const WSL_LAUNCH_FAILURES: [&str; 2] = ["execvpe(", "getpwnam("];
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct BridgeExit {
@@ -35,23 +35,30 @@ impl BridgeExit {
     }
 
     fn wsl_failure(&self) -> Option<String> {
-        if self.diagnostics != Diagnostics::Wsl || self.code == Some(0) {
+        if self.diagnostics != Diagnostics::Wsl {
             return None;
         }
-        let service_failed = self.code == Some(WSL_SERVICE_FAILURE);
-        service_failed
-            .then(|| service_error(&self.stdout))
-            .flatten()
-            .or_else(|| launch_failure(&self.stderr))
-            .or_else(|| {
-                service_failed.then(|| {
-                    format!(
-                        "wsl.exe exited with code {:#010x}",
-                        WSL_SERVICE_FAILURE as u32
-                    )
-                })
-            })
+        wsl_failure(self.code, &self.stdout, &self.stderr)
     }
+}
+
+pub fn wsl_failure(code: Option<i32>, stdout: &str, stderr: &str) -> Option<String> {
+    if code == Some(0) {
+        return None;
+    }
+    let service_failed = code == Some(WSL_SERVICE_FAILURE);
+    service_failed
+        .then(|| service_error(stdout))
+        .flatten()
+        .or_else(|| launch_failure(stderr))
+        .or_else(|| {
+            service_failed.then(|| {
+                format!(
+                    "wsl.exe exited with code {:#010x}",
+                    WSL_SERVICE_FAILURE as u32
+                )
+            })
+        })
 }
 
 fn service_error(stdout: &str) -> Option<String> {
@@ -84,8 +91,9 @@ fn launch_failure(stderr: &str) -> Option<String> {
             .strip_prefix(WSL_RELAY_PREFIX)?
             .split_once(WSL_RELAY_ERROR)?;
         let message = without_source_location(message);
-        message
-            .starts_with(WSL_LAUNCH_FAILURE)
+        WSL_LAUNCH_FAILURES
+            .iter()
+            .any(|failure| message.starts_with(failure))
             .then(|| message.to_string())
     })
 }
@@ -143,7 +151,7 @@ fn decode_utf8(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn decode_wsl_output(bytes: &[u8]) -> String {
+pub fn decode_wsl_output(bytes: &[u8]) -> String {
     let Some(start) = utf16le_start(bytes) else {
         return decode_utf8(bytes);
     };
@@ -268,6 +276,17 @@ mod tests {
         assert_eq!(
             exit.to_string(),
             "WSL could not start the bridge: execvpe(nosuchprog) failed: No such file or directory"
+        );
+    }
+
+    #[test]
+    fn a_relay_that_cannot_find_the_user_is_a_launch_failure_without_the_service_message() {
+        let exit = wsl(1, MISSING_USER_RELAY, "");
+
+        assert!(exit.is_permanent());
+        assert_eq!(
+            exit.to_string(),
+            "WSL could not start the bridge: getpwnam(nosuchuser) failed 0"
         );
     }
 

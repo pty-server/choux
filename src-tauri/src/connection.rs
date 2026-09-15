@@ -22,13 +22,14 @@ use crate::transport::{
     target::{Route, Target},
     Endpoint, WebSocket,
 };
+use crate::wsl::{refusal, DistroGate, GatedConnector, Refusal, WslRunning};
 
 pub const PTYS_HOST: &str = "ptys.local";
 const REQUEST_DEADLINE: Duration = Duration::from_secs(15);
 const SOCKET_OPEN_DEADLINE: Duration = Duration::from_secs(15);
 const UNRETAINED_TARGET: &str = "This ptys connection is no longer configured in Choux.";
 
-type Pool = HttpPool<Endpoint>;
+type Pool = HttpPool<GatedConnector<Endpoint, WslRunning>>;
 type SocketSenders = HashMap<String, mpsc::UnboundedSender<Message>>;
 
 #[derive(Serialize)]
@@ -101,6 +102,7 @@ pub struct ConnectionHub {
     next_socket_id: AtomicU64,
     sockets: Mutex<SocketSenders>,
     registrations: Mutex<HashMap<Target, Registration>>,
+    distros: Arc<DistroGate<WslRunning>>,
 }
 
 impl ConnectionHub {
@@ -136,9 +138,23 @@ impl ConnectionHub {
         let mut registrations = lock(&self.registrations);
         let registration = registrations.get_mut(target).ok_or(UNRETAINED_TARGET)?;
         let pool = registration.pool.get_or_insert_with(|| {
-            Arc::new(HttpPool::new(Endpoint::Command(spec), REQUEST_DEADLINE))
+            let guard = target
+                .wsl_distro()
+                .map(|distro| (distro.to_string(), Arc::clone(&self.distros)));
+            Arc::new(HttpPool::new(
+                GatedConnector::new(Endpoint::Command(spec), guard),
+                REQUEST_DEADLINE,
+            ))
         });
         Ok(Arc::clone(pool))
+    }
+
+    pub async fn distro_running(&self, distro: &str) -> Result<(), Refusal> {
+        self.distros.check_fresh(distro).await
+    }
+
+    pub async fn forget_running_distros(&self) {
+        self.distros.forget().await;
     }
 
     fn sockets(&self) -> MutexGuard<'_, SocketSenders> {
@@ -205,16 +221,40 @@ pub async fn ptys_request(
             let endpoint = crate::local_server::socket_endpoint(&instance).await?;
             local_http_request(&endpoint, &request).await?
         }
-        Route::Bridge(spec) => hub
-            .pool(&target, spec)?
-            .request(&request, lane.unwrap_or(Lane::Shared))
-            .await
-            .map_err(|error| match error {
-                PoolError::Closed => UNRETAINED_TARGET.to_string(),
-                error => error.to_string(),
-            })?,
+        Route::Bridge(spec) => {
+            let pool = hub.pool(&target, spec)?;
+            if let Some(distro) = target.wsl_distro() {
+                hub.distros.check(distro).await?;
+            }
+            match pool.request(&request, lane.unwrap_or(Lane::Shared)).await {
+                Ok(response) => response,
+                Err(PoolError::Closed) => return Err(UNRETAINED_TARGET.into()),
+                Err(error) => return Err(bridge_failure(&hub, &target, error).await),
+            }
+        }
     };
     Ok(response.into())
+}
+
+async fn bridge_failure(hub: &ConnectionHub, target: &Target, error: PoolError) -> String {
+    if let PoolError::Connect(connect) = &error {
+        if let Some(refused) = refusal(connect) {
+            return refused.to_string();
+        }
+    }
+    let Some(distro) = target
+        .wsl_distro()
+        .filter(|_| !matches!(error, PoolError::Busy))
+    else {
+        return error.to_string();
+    };
+    match (hub.distros.check_fresh(distro).await, error) {
+        (Err(refused @ Refusal::NotRunning(_)), PoolError::OutcomeUnknown(_)) => {
+            PoolError::OutcomeUnknown(refused.to_string()).to_string()
+        }
+        (Err(refused @ Refusal::NotRunning(_)), _) => refused.to_string(),
+        (_, error) => error.to_string(),
+    }
 }
 
 #[tauri::command]
@@ -243,6 +283,10 @@ pub async fn ptys_socket_open(
     if matches!(route, Route::Bridge(_)) {
         hub.check_retained(&target)?;
     }
+    let distro = target.wsl_distro().map(String::from);
+    if let Some(distro) = &distro {
+        hub.distros.check_fresh(distro).await?;
+    }
     let url = format!("ws://{}.{PTYS_HOST}{path}", target.instance());
     let endpoint = endpoint_for(route).await?;
     let connection_id = format!(
@@ -255,6 +299,13 @@ pub async fn ptys_socket_open(
     tauri::async_runtime::spawn(async move {
         if let Err(error) = relay_socket(&app, &channel, endpoint, &url, protocols, receiver).await
         {
+            let error = match &distro {
+                Some(distro) => match app.state::<ConnectionHub>().distro_running(distro).await {
+                    Err(refused @ Refusal::NotRunning(_)) => refused.to_string(),
+                    _ => error,
+                },
+                None => error,
+            };
             let _ = app.emit(&channel, SocketEvent::with_data("error", error));
         }
         app.state::<ConnectionHub>()

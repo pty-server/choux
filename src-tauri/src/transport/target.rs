@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use super::bridge::{CommandSpec, Diagnostics};
 
-const SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+pub const SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const SSH_CONNECT_TIMEOUT_SECONDS: u32 = 10;
 const SSH_SERVER_ALIVE_INTERVAL_SECONDS: u32 = 15;
 const INSTANCE_MAX: usize = 64;
@@ -78,32 +78,81 @@ impl Target {
                 instance,
                 node_bin,
             } => {
-                if !valid_name(distro, DISTRO_MAX, u8::is_ascii_alphanumeric) {
-                    return Err("Invalid WSL distribution name.".into());
-                }
-                if !valid_user(user) {
-                    return Err("Invalid WSL user name.".into());
-                }
-                let node_bin = checked_node_bin(node_bin.as_deref())?;
-                if node_bin.is_some_and(|dir| dir == "/mnt" || dir.starts_with("/mnt/")) {
-                    return Err(
-                        "The node directory is on a Windows drive; use a Node.js installed inside the distribution."
-                            .into(),
-                    );
-                }
-                Ok(Route::Bridge(wsl_bridge(
+                let path = wsl_host_path(distro, user, node_bin.as_deref())?;
+                Ok(Route::Bridge(wsl_command(
                     distro,
-                    user,
-                    instance,
-                    node_bin.map_or_else(|| SYSTEM_PATH.to_string(), search_path),
+                    Some(user),
+                    bridge_args(instance, Some(path)),
                 )))
             }
+        }
+    }
+
+    pub fn wsl_distro(&self) -> Option<&str> {
+        match self {
+            Self::Wsl { distro, .. } => Some(distro),
+            Self::Local { .. } | Self::Ssh { .. } => None,
         }
     }
 }
 
 pub fn valid_instance(instance: &str) -> bool {
     valid_name(instance, INSTANCE_MAX, u8::is_ascii_alphanumeric)
+}
+
+pub fn valid_distro(distro: &str) -> bool {
+    valid_name(distro, DISTRO_MAX, u8::is_ascii_alphanumeric)
+}
+
+pub fn on_windows_drive(dir: &str) -> bool {
+    dir == "/mnt" || dir.starts_with("/mnt/")
+}
+
+pub fn wsl_host_path(distro: &str, user: &str, node_bin: Option<&str>) -> Result<String, String> {
+    if !valid_distro(distro) {
+        return Err("Invalid WSL distribution name.".into());
+    }
+    if !valid_user(user) {
+        return Err("Invalid WSL user name.".into());
+    }
+    let node_bin = checked_node_bin(node_bin)?;
+    if node_bin.is_some_and(on_windows_drive) {
+        return Err(
+            "The node directory is on a Windows drive; use a Node.js installed inside the distribution."
+                .into(),
+        );
+    }
+    Ok(node_bin.map_or_else(|| SYSTEM_PATH.to_string(), search_path))
+}
+
+pub fn system_node_dir(dir: &str) -> bool {
+    SYSTEM_PATH.split(':').any(|system| system == dir)
+}
+
+pub fn wsl_exe(args: Vec<OsString>) -> CommandSpec {
+    CommandSpec {
+        program: "wsl.exe".into(),
+        args,
+        env: vec![("WSL_UTF8".into(), "1".into())],
+        diagnostics: Diagnostics::Wsl,
+    }
+}
+
+pub fn wsl_command(distro: &str, user: Option<&str>, program: Vec<String>) -> CommandSpec {
+    let mut args: Vec<OsString> = vec!["-d".into(), distro.into()];
+    if let Some(user) = user {
+        args.extend(["-u".into(), user.into()]);
+    }
+    args.push("--exec".into());
+    args.extend(program.into_iter().map(OsString::from));
+    wsl_exe(args)
+}
+
+pub fn path_env(path: &str, program: &[&str]) -> Vec<String> {
+    ["env".to_string(), format!("PATH={path}")]
+        .into_iter()
+        .chain(program.iter().map(|arg| arg.to_string()))
+        .collect()
 }
 
 fn valid_name(name: &str, max: usize, valid_first: fn(&u8) -> bool) -> bool {
@@ -116,7 +165,7 @@ fn valid_name(name: &str, max: usize, valid_first: fn(&u8) -> bool) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
-fn valid_user(user: &str) -> bool {
+pub fn valid_user(user: &str) -> bool {
     valid_name(user, USER_MAX, |byte| {
         byte.is_ascii_alphanumeric() || *byte == b'_'
     })
@@ -140,7 +189,7 @@ fn valid_ssh_host(host: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
 }
 
-fn checked_node_bin(node_bin: Option<&str>) -> Result<Option<&str>, String> {
+pub fn checked_node_bin(node_bin: Option<&str>) -> Result<Option<&str>, String> {
     let Some(dir) = node_bin else {
         return Ok(None);
     };
@@ -210,23 +259,6 @@ fn ssh_bridge(host: &str, instance: &str, path: Option<String>) -> CommandSpec {
         args: args.into_iter().map(OsString::from).collect(),
         env: Vec::new(),
         diagnostics: Diagnostics::Plain,
-    }
-}
-
-fn wsl_bridge(distro: &str, user: &str, instance: &str, path: String) -> CommandSpec {
-    let mut args: Vec<OsString> = ["-d", distro, "-u", user, "--exec"]
-        .map(OsString::from)
-        .into();
-    args.extend(
-        bridge_args(instance, Some(path))
-            .into_iter()
-            .map(OsString::from),
-    );
-    CommandSpec {
-        program: "wsl.exe".into(),
-        args,
-        env: vec![("WSL_UTF8".into(), "1".into())],
-        diagnostics: Diagnostics::Wsl,
     }
 }
 

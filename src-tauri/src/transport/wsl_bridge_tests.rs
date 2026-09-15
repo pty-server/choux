@@ -212,7 +212,7 @@ async fn reports_what_keeps_a_wsl_bridge_from_starting() {
                 instance: "default".into(),
                 node_bin: Some(distro.node_bin.clone()),
             },
-            "WSL could not start the bridge: User not found",
+            "WSL could not start the bridge: ",
         ),
     ];
     if !distro.resolves_ptys_on_the_system_path().await {

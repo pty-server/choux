@@ -1,10 +1,12 @@
 <script lang="ts">
   import { useServerRegistry } from "../../registry/context";
   import { nativeServerUrl, sameTransport, transportKind, validTransport } from "../../registry/serverTransport";
+  import { defaultWslDistro, distroLabel, usableDistro, type WslServerTools, type WslTransport } from "../../registry/wsl";
   import { isInsecureRemote } from "./insecureRemote";
   import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
   import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
   import { emptySshFields, sshFields, sshProblem, sshTransport, type SshFields } from "./sshDraft";
+  import { detectSummary, emptyWslFields, wslFields, wslFieldsTransport, wslProblem, type WslFields } from "./wslDraft";
 
   interface Draft {
     label: string;
@@ -12,6 +14,7 @@
     url: string;
     token: string;
     ssh: SshFields;
+    wsl: WslFields;
   }
 
   interface Props {
@@ -20,23 +23,29 @@
     clientProtocolVersion: number | undefined;
     focusServerId?: string;
     nativeTransports?: boolean;
+    wsl?: WslServerTools;
     copyText: (text: string) => Promise<void>;
     onClose: () => void;
   }
 
-  let { open, accentPalette, clientProtocolVersion, focusServerId, nativeTransports = false, copyText, onClose }: Props = $props();
+  let { open, accentPalette, clientProtocolVersion, focusServerId, nativeTransports = false, wsl, copyText, onClose }: Props = $props();
   const registry = useServerRegistry();
   let drafts = $state<Record<string, Draft>>(createDrafts());
   let confirmingRemoveId = $state<string>();
   let copiedUpdateServerId = $state<string>();
   let serverElements = $state<Record<string, HTMLElement>>({});
   let addLabel = $state("");
-  let addKind = $state<"url" | "ssh">("url");
+  let addKind = $state<"url" | "ssh" | "wsl">("url");
   let addUrl = $state("");
   let addSsh = $state<SshFields>(emptySshFields());
+  let addWsl = $state<WslFields>(emptyWslFields());
   let addToken = $state("");
   let addAuth = $state<"token" | "none">("token");
   let addAccent = $state("");
+  let detecting = $state<Record<string, boolean>>({});
+  let detected = $state<Record<string, string>>({});
+  let startingId = $state<string>();
+  let startFailures = $state<Record<string, string>>({});
 
   function createDrafts(): Record<string, Draft> {
     return Object.fromEntries(registry.servers.map((conn) => [conn.config.id, {
@@ -45,6 +54,7 @@
       url: conn.config.url,
       token: "",
       ssh: sshFields(conn.config.transport),
+      wsl: wslFields(conn.config.transport),
     }]));
   }
 
@@ -55,13 +65,16 @@
     const transport = conn.config.transport;
     return draft.label !== conn.config.label || draft.accent !== conn.config.accent
       || (transport === undefined && (draft.url !== conn.config.url || draft.token !== ""))
-      || (transportKind(transport) === "ssh" && !sameTransport(transport, sshTransport(draft.ssh)));
+      || (transportKind(transport) === "ssh" && !sameTransport(transport, sshTransport(draft.ssh)))
+      || (wsl !== undefined && transportKind(transport) === "wsl" && !sameTransport(transport, wslFieldsTransport(draft.wsl)));
   }
 
   function canSave(id: string): boolean {
     const draft = drafts[id];
-    const isSsh = transportKind(registry.get(id)?.config.transport) === "ssh";
-    return isDirty(id) && !!draft && (!isSsh || sshProblem(draft.ssh) === undefined);
+    const kind = transportKind(registry.get(id)?.config.transport);
+    return isDirty(id) && !!draft
+      && (kind !== "ssh" || sshProblem(draft.ssh) === undefined)
+      && (kind !== "wsl" || wsl === undefined || wslProblem(draft.wsl) === undefined);
   }
 
   async function save(id: string) {
@@ -75,6 +88,7 @@
       accent: draft.accent,
       ...(transport === undefined ? { url: draft.url, token: draft.token || undefined } : {}),
       ...(transportKind(transport) === "ssh" ? { transport: sshTransport(draft.ssh) } : {}),
+      ...(wsl !== undefined && transportKind(transport) === "wsl" ? { transport: wslFieldsTransport(draft.wsl) } : {}),
     });
     draft.token = "";
   }
@@ -92,22 +106,51 @@
     }, 1500);
   }
 
+  async function detect(key: string, fields: WslFields) {
+    const distro = fields.distro.trim();
+    const user = fields.user.trim() || undefined;
+    if (!wsl || distro === "") return;
+    detecting[key] = true;
+    detected[key] = "";
+    try {
+      const probe = await wsl.detect(distro, user);
+      if (fields.distro.trim() !== distro || (fields.user.trim() || undefined) !== user) {
+        detected[key] = "The distribution or user changed while Detect ran. Run Detect again.";
+        return;
+      }
+      fields.user = probe.user;
+      fields.nodeBin = probe.nodeBin ?? "";
+      detected[key] = detectSummary(probe);
+    } catch (err) {
+      detected[key] = err instanceof Error ? err.message : String(err);
+    } finally {
+      detecting[key] = false;
+    }
+  }
+
+  async function startInWsl(id: string, transport: WslTransport) {
+    if (!wsl) return;
+    startingId = id;
+    startFailures[id] = "";
+    try {
+      await wsl.start(transport);
+      registry.refresh(id);
+    } catch (err) {
+      startFailures[id] = err instanceof Error ? err.message : String(err);
+    } finally {
+      startingId = undefined;
+    }
+  }
+
   function canAdd(): boolean {
     if (addKind === "ssh") return sshProblem(addSsh) === undefined;
+    if (addKind === "wsl") return wslProblem(addWsl) === undefined;
     return !!addUrl && (addAuth === "none" || !!addToken);
   }
 
   async function addServer() {
     if (!canAdd()) return;
-    if (addKind === "ssh") {
-      const transport = sshTransport(addSsh);
-      await registry.addServer({
-        url: nativeServerUrl(transport),
-        transport,
-        label: addLabel || undefined,
-        accent: addAccent || undefined,
-      });
-    } else {
+    if (addKind === "url") {
       await registry.addServer({
         url: addUrl,
         label: addLabel || undefined,
@@ -115,10 +158,20 @@
         token: addAuth === "token" ? addToken : undefined,
         accent: addAccent || undefined,
       });
+    } else {
+      const transport = addKind === "ssh" ? sshTransport(addSsh) : wslFieldsTransport(addWsl);
+      await registry.addServer({
+        url: nativeServerUrl(transport),
+        transport,
+        label: addLabel || undefined,
+        accent: addAccent || undefined,
+      });
     }
     addLabel = "";
     addUrl = "";
     addSsh = emptySshFields();
+    addWsl = emptyWslFields();
+    detected.add = "";
     addToken = "";
     addAuth = "token";
     addAccent = accentPalette[registry.servers.length % accentPalette.length] ?? "";
@@ -134,6 +187,12 @@
   $effect(() => {
     if (!addAccent && accentPalette.length > 0) {
       addAccent = accentPalette[registry.servers.length % accentPalette.length];
+    }
+  });
+
+  $effect(() => {
+    if (addKind === "wsl" && wsl && addWsl.distro === "") {
+      addWsl.distro = defaultWslDistro(wsl.distros)?.name ?? "";
     }
   });
 
@@ -161,6 +220,41 @@
     <p class="warning">⚠ {sshProblem(fields)}</p>
   {/if}
   <p class="hint">Choux runs <code>ssh {fields.host.trim() || "host"} ptys bridge</code> without a terminal, so the host needs key or agent authentication and a known host key. Password prompts are not supported. Set the node bin directory when <code>ptys</code> is not on the non-interactive PATH, as with nvm.</p>
+{/snippet}
+
+{#snippet wslInputs(fields: WslFields, key: string)}
+  {@const distros = wsl?.distros ?? []}
+  <label>
+    WSL distribution
+    <select bind:value={fields.distro}>
+      {#if !distros.some((distro) => distro.name === fields.distro)}
+        <option value={fields.distro}>{fields.distro || "Choose a distribution"}</option>
+      {/if}
+      {#each distros as distro (distro.name)}
+        <option value={distro.name} disabled={!usableDistro(distro)}>{distroLabel(distro)}</option>
+      {/each}
+    </select>
+  </label>
+  <label>
+    Linux user
+    <input type="text" bind:value={fields.user} placeholder="Detect fills in the default user" />
+  </label>
+  <label>
+    ptys instance
+    <input type="text" bind:value={fields.instance} />
+  </label>
+  <label>
+    Node bin directory
+    <input type="text" bind:value={fields.nodeBin} placeholder="Set by Detect when Node.js is not on the system PATH" />
+  </label>
+  <div class="inline-action">
+    <button type="button" class="copy" disabled={detecting[key] || fields.distro.trim() === ""} onclick={() => void detect(key, fields)}>{detecting[key] ? "Detecting..." : "Detect"}</button>
+    {#if detected[key]}<span class="hint">{detected[key]}</span>{/if}
+  </div>
+  {#if fields.distro.trim() !== "" && wslProblem(fields)}
+    <p class="warning">⚠ {wslProblem(fields)}</p>
+  {/if}
+  <p class="hint">Choux runs <code>wsl.exe -d {fields.distro.trim() || "distribution"} --exec ptys bridge</code>. Detect runs commands inside the distribution to find the user and Node.js, and starts the distribution when it is stopped.</p>
 {/snippet}
 
 {#if open}
@@ -210,6 +304,14 @@
                 {/if}
               {:else if kind === "ssh"}
                 {@render sshInputs(draft.ssh)}
+              {:else if kind === "wsl" && wsl}
+                {@render wslInputs(draft.wsl, conn.config.id)}
+                {#if valid?.kind === "wsl" && conn.status !== "online"}
+                  <div class="inline-action">
+                    <button type="button" class="copy" disabled={startingId === conn.config.id} onclick={() => void startInWsl(conn.config.id, valid)}>{startingId === conn.config.id ? "Starting..." : `Start in WSL (${valid.distro})`}</button>
+                    {#if startFailures[conn.config.id]}<span class="warning">{startFailures[conn.config.id]}</span>{/if}
+                  </div>
+                {/if}
               {:else if valid?.kind === "local"}
                 <p class="native-connection">Local ptys instance: <code>{valid.instance}</code>. It uses its private control socket and does not need a token.</p>
               {:else if valid?.kind === "wsl"}
@@ -266,11 +368,16 @@
             <select bind:value={addKind}>
               <option value="url">URL</option>
               <option value="ssh">SSH</option>
+              {#if wsl}
+                <option value="wsl">WSL</option>
+              {/if}
             </select>
           </label>
         {/if}
         {#if addKind === "ssh" && nativeTransports}
           {@render sshInputs(addSsh)}
+        {:else if addKind === "wsl" && nativeTransports && wsl}
+          {@render wslInputs(addWsl, "add")}
         {:else}
           <label>
             URL
@@ -398,6 +505,7 @@
     color: var(--fg);
     font-size: 0.8rem;
   }
+  .inline-action { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
 
   .row-actions, .actions { display: flex; align-items: center; gap: var(--sp-2); justify-content: flex-end; }
   button { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font-size: 0.85rem; }

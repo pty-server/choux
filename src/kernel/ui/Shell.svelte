@@ -17,6 +17,7 @@
   import { clampSidebarWidth, defaultSidebarWidth, getSidebarWidth, saveSidebarWidth } from "../storage/sidebarWidthStore";
   import { getSessionOrder, orderSessions, reorderSessionIds, replaceSessionId, saveSessionOrder, sessionOrderScope, type SessionOrder } from "../storage/sessionOrderStore";
   import type { SessionDropPosition } from "../../registry/types";
+  import type { WslServerTools } from "../../registry/wsl";
   import { agentStateKey } from "../../registry/agentStateKey";
   import ShellTopBar from "./ShellTopBar.svelte";
   import ShellRail from "./ShellRail.svelte";
@@ -57,6 +58,7 @@
     /** accelerator -> commandId */
     keybindings?: Readonly<Record<string, string>>;
     nativeTransports?: boolean;
+    wsl?: WslServerTools;
     topBar?: Snippet;
     pane?: Snippet;
   }
@@ -91,6 +93,7 @@
     onLayoutChange,
     keybindings = {},
     nativeTransports = false,
+    wsl,
     topBar,
     pane,
   }: Props = $props();
@@ -330,6 +333,7 @@
     clientProtocolVersion={clientProtocolVersion}
     focusServerId={manageFocusServerId}
     {nativeTransports}
+    {wsl}
     copyText={writeClipboardText}
     onClose={() => { showManageServers = false; manageFocusServerId = undefined; }}
   />

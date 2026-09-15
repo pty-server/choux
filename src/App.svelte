@@ -14,13 +14,17 @@
   import { tokenStore } from "./kernel/storage/serverConfigStore";
   import { serverUsesToken } from "./kernel/storage/serverConfigStore";
   import { initializeTokenStore, isTauriRuntime } from "./kernel/storage/tokenStore";
-  import { getLocalServerBridge, type LocalServerBridge, type LocalServerTool } from "./kernel/platform/localServer";
+  import { getLocalServerBridge, type LocalServerTool } from "./kernel/platform/localServer";
+  import { getWslBridge, type WslBridge } from "./kernel/platform/wsl";
+  import { discoverWslServers } from "./kernel/servers/wslDiscovery";
   import { listenForSessionDeepLinks, serverForDeepLink, type SessionDeepLink } from "./kernel/platform/deepLink";
-  import { nativeServerUrl, serverAddressKey, type ServerTransport } from "./registry/serverTransport";
+  import { DEFAULT_INSTANCE, nativeServerUrl, serverAddressKey, transportKind, type ServerTransport } from "./registry/serverTransport";
+  import { defaultWslDistro, wslHost, wslTransport, type WslProbe, type WslServerTools, type WslStatus, type WslTransport } from "./registry/wsl";
   import { writeClipboardText } from "./kernel/platform/clipboard";
   import { openExternalUrl } from "./kernel/platform/openUrl";
   import { provideServerRegistry } from "./registry/context";
   import LocalServerDialog from "./features/servers/LocalServerDialog.svelte";
+  import WslServerDialog from "./features/servers/WslServerDialog.svelte";
   import { ptysReleaseWatch } from "./features/servers/ptysReleaseWatch.svelte";
   import { appUpdateWatch } from "./kernel/platform/appUpdateWatch.svelte";
   import SettingsPage from "./features/settings/SettingsPage.svelte";
@@ -89,6 +93,19 @@
   let localServerBusy = $state(false);
   let localServerMessage = $state("");
   let localServerTool = $state<LocalServerTool>({ available: false, npmAvailable: false });
+  let wslBridge = $state<WslBridge>();
+  let wslStatus = $state<WslStatus>();
+  let showWslDialog = $state(false);
+  let wslDistro = $state<string>();
+  let wslUser = $state("");
+  let wslProbe = $state<WslProbe>();
+  let wslBusy = $state(false);
+  let wslMessage = $state("");
+  let wslTools = $derived<WslServerTools | undefined>(wslBridge && wslStatus?.supported ? {
+    distros: wslStatus.distros,
+    detect: (distro, user) => wslBridge!.probe(distro, user),
+    start: (transport) => wslBridge!.start(wslHost(transport.distro, transport), transport.instance),
+  } : undefined);
   let settingsOpen = $state(false);
   let terminalSettings = $state<TerminalSettings>({
     ...defaultTerminalSettings,
@@ -132,7 +149,9 @@
         keybindingOverrides = await getKeybindingOverrides();
         sessionProfiles = await getSessionProfiles();
         await registry.load();
-        await discoverLocalServers();
+        const wsl = await getWslBridge();
+        if (wsl && await wsl.supported()) void startWslDiscovery(wsl);
+        else await discoverLocalServers();
         const lastSession = await getLastOpenSession();
         if (!disposed && lastSession && registry.get(lastSession.serverId)) {
           selectedServerId = lastSession.serverId;
@@ -558,7 +577,7 @@
           return config?.transport?.kind === "local" && !knownInstances.has(config.transport.instance);
         });
         if (startedServerId) {
-          await openLocalHomeProject(startedServerId, bridge);
+          await openServerHomeProject(startedServerId, bridge.home);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -568,20 +587,107 @@
     finally { localServerBusy = false; }
   }
 
-  async function openLocalHomeProject(serverId: string, bridge: LocalServerBridge): Promise<void> {
+  async function openServerHomeProject(serverId: string, home: () => Promise<string | undefined>): Promise<void> {
     const config = registry.get(serverId)?.config;
     if (!config) return;
     const api = apiFor(config, undefined);
     try {
       await openHomeProject({
         getInfo: api.getInfo,
-        home: bridge.home,
+        home,
         createWorkspace: api.createWorkspace,
         startSession: (workspaceId) => startDefaultSession(serverId, workspaceId),
       });
     } catch (err) {
       showError(err instanceof Error ? err.message : String(err), "session-create");
     }
+  }
+
+  const SERVER_INFO_WAIT_ATTEMPTS = 60;
+  const SERVER_INFO_WAIT_MS = 250;
+
+  async function waitForServerInfo(serverId: string): Promise<boolean> {
+    for (let attempt = 0; attempt < SERVER_INFO_WAIT_ATTEMPTS; attempt += 1) {
+      if (registry.get(serverId)?.info !== undefined) return true;
+      await new Promise((resolve) => setTimeout(resolve, SERVER_INFO_WAIT_MS));
+    }
+    return false;
+  }
+
+  async function ensureWslServer(transport: WslTransport): Promise<string> {
+    const connection = await registry.ensureServer({ url: nativeServerUrl(transport), transport, auth: "none" });
+    return connection.config.id;
+  }
+
+  function selectWslDistro(name: string | undefined): void {
+    wslDistro = name;
+    wslUser = "";
+    wslProbe = undefined;
+    wslMessage = "";
+  }
+
+  async function refreshWslStatus(bridge: WslBridge): Promise<WslStatus> {
+    const status = await bridge.status();
+    wslStatus = status;
+    if (!status.distros.some((distro) => distro.name === wslDistro)) selectWslDistro(defaultWslDistro(status.distros)?.name);
+    return status;
+  }
+
+  async function startWslDiscovery(bridge: WslBridge): Promise<void> {
+    wslBridge = bridge;
+    try {
+      const status = await refreshWslStatus(bridge);
+      const found = await discoverWslServers(status, { bridge, ensureServer: ensureWslServer });
+      const configured = registry.servers.some((conn) => transportKind(conn.config.transport) === "wsl");
+      if (found.length === 0 && !configured) showWslDialog = true;
+    } catch (err) {
+      showError(err instanceof Error ? err.message : String(err), "local-discovery");
+    }
+  }
+
+  async function runWslStep(step: (bridge: WslBridge) => Promise<void>): Promise<void> {
+    const bridge = wslBridge;
+    if (!bridge || wslBusy) return;
+    wslBusy = true;
+    wslMessage = "";
+    try { await step(bridge); } catch (err) { wslMessage = err instanceof Error ? err.message : String(err); }
+    finally { wslBusy = false; }
+  }
+
+  async function checkWslDistro(bridge: WslBridge): Promise<void> {
+    const distro = wslDistro;
+    if (distro === undefined) return;
+    wslProbe = undefined;
+    const probe = await bridge.probe(distro, wslUser.trim() || undefined);
+    if (wslDistro !== distro) return;
+    wslProbe = probe;
+    wslUser = probe.user;
+    await refreshWslStatus(bridge);
+  }
+
+  async function installWslPtys(bridge: WslBridge): Promise<void> {
+    const distro = wslDistro;
+    const probe = wslProbe;
+    if (distro === undefined || probe === undefined) return;
+    await bridge.install(wslHost(distro, probe));
+    await checkWslDistro(bridge);
+  }
+
+  async function startWslPtys(bridge: WslBridge): Promise<void> {
+    const distro = wslDistro;
+    const probe = wslProbe;
+    if (distro === undefined || probe === undefined) return;
+    const host = wslHost(distro, probe);
+    await bridge.start(host, DEFAULT_INSTANCE);
+    await refreshWslStatus(bridge);
+    const serverId = await ensureWslServer(wslTransport(host, DEFAULT_INSTANCE));
+    showWslDialog = false;
+    if (await waitForServerInfo(serverId)) {
+      await openServerHomeProject(serverId, () => bridge.home(host));
+      return;
+    }
+    const failure = registry.get(serverId)?.connectionError;
+    showError(`ptys started in ${distro}, but Choux could not connect to it yet.${failure ? ` ${failure}` : ""}`, "local-discovery");
   }
 
   async function handleSaveTerminalSettings(settings: TerminalSettings): Promise<void> {
@@ -655,6 +761,7 @@
     onLayoutChange={() => layoutRevision += 1}
     keybindings={keybindingsByAccelerator(resolvedKeybindings)}
     nativeTransports={isTauriRuntime()}
+    wsl={wslTools}
   >
     {#snippet pane()}
       {#if settingsOpen}
@@ -747,6 +854,22 @@
     onStart={() => void startLocalServer()}
     onRetry={() => void retryLocalServers()}
     onClose={() => showLocalServerDialog = false}
+  />
+  <WslServerDialog
+    open={showWslDialog}
+    status={wslStatus}
+    distro={wslDistro}
+    user={wslUser}
+    probe={wslProbe}
+    busy={wslBusy}
+    message={wslMessage}
+    onSelectDistro={selectWslDistro}
+    onUserInput={(user) => { wslUser = user; wslProbe = undefined; }}
+    onCheck={() => void runWslStep(checkWslDistro)}
+    onInstall={() => void runWslStep(installWslPtys)}
+    onStart={() => void runWslStep(startWslPtys)}
+    onRetry={() => void runWslStep(async (bridge) => { await refreshWslStatus(bridge); })}
+    onClose={() => showWslDialog = false}
   />
 </main>
 
