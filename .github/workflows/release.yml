@@ -79,6 +79,9 @@ jobs:
             args: "--target aarch64-apple-darwin"
             rust_targets: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4

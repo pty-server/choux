@@ -1,10 +1,13 @@
-# CI is scoped to install, lint, typecheck, unit tests (npm test), and Vite build
-# (npm run build); it explicitly does not run npm run test:integration or
-# npm run tauri:build. The integration suite needs a sibling ptys checkout and a
-# native node-pty build, out of scope here.
+# The quality job is scoped to install, lint, typecheck, unit tests (npm test),
+# and Vite build (npm run build); it explicitly does not run
+# npm run test:integration. The integration suite needs a sibling ptys checkout
+# and a native node-pty build, out of scope here.
 #
 # `npm run typecheck` is plain `tsc --noEmit`: it covers .ts files only. Svelte
 # component bodies are not type-checked (that needs svelte-check, not installed).
+#
+# The windows job runs clippy and the Rust unit tests on Windows (the WSL tests
+# are #[ignore]d) and links a release binary without bundling it.
 name: CI
 
 on:
@@ -45,3 +48,42 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --locked --lib
+
+      - name: Build release binary
+        run: npm run tauri:build -- --no-bundle
