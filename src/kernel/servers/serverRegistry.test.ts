@@ -120,6 +120,143 @@ describe("server registry status", () => {
   });
 });
 
+describe("server registry protocol gate", () => {
+  const recordingSockets = (): { sockets: MockEventSocket[]; createEventSocket: () => MockEventSocket } => {
+    const sockets: MockEventSocket[] = [];
+    return {
+      sockets,
+      createEventSocket: () => {
+        const socket = new MockEventSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    };
+  };
+
+  it("opens the event stream only once a poll reports a compatible protocol", async () => {
+    let resolveInfo: (info: unknown) => void = () => {};
+    const getInfo = vi.fn()
+      .mockResolvedValue({ protocol: PROTOCOL_VERSION })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveInfo = resolve; }));
+    const { sockets, createEventSocket } = recordingSockets();
+    const registry = createServerRegistry({ createClient: () => clientWith({ getInfo }), createEventSocket, pollIntervalMs: 1000 });
+
+    await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+    expect(sockets).toHaveLength(0);
+
+    resolveInfo({ protocol: PROTOCOL_VERSION });
+    await settle();
+    expect(sockets).toHaveLength(1);
+  });
+
+  it("never opens the event stream for a server with an incompatible protocol", async () => {
+    const { sockets, createEventSocket } = recordingSockets();
+    const registry = createServerRegistry({
+      createClient: () => clientWith({ protocol: PROTOCOL_VERSION + 1 }),
+      createEventSocket,
+      pollIntervalMs: 1000,
+    });
+
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+
+    expect(registry.get(conn.config.id)?.status).toBe("version-mismatch");
+    expect(sockets).toHaveLength(0);
+  });
+
+  it("closes the event stream while the protocol is incompatible and reopens it once compatible", async () => {
+    const getInfo = vi.fn().mockResolvedValue({ protocol: PROTOCOL_VERSION });
+    const { sockets, createEventSocket } = recordingSockets();
+    const registry = createServerRegistry({ createClient: () => clientWith({ getInfo }), createEventSocket, pollIntervalMs: 1000 });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+
+    getInfo.mockResolvedValueOnce({ protocol: PROTOCOL_VERSION + 1 });
+    registry.refresh(conn.config.id);
+    await settle();
+    expect(registry.get(conn.config.id)?.status).toBe("version-mismatch");
+    expect(sockets.map((socket) => socket.closed)).toEqual([true]);
+
+    registry.refresh(conn.config.id);
+    await settle();
+    expect(registry.get(conn.config.id)?.status).toBe("online");
+    expect(sockets.map((socket) => socket.closed)).toEqual([true, false]);
+  });
+
+  it("keeps the event stream through a failed poll", async () => {
+    const getInfo = vi.fn().mockResolvedValue({ protocol: PROTOCOL_VERSION });
+    const { sockets, createEventSocket } = recordingSockets();
+    const registry = createServerRegistry({ createClient: () => clientWith({ getInfo }), createEventSocket, pollIntervalMs: 1000 });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+
+    getInfo.mockRejectedValueOnce(new Error("network"));
+    registry.refresh(conn.config.id);
+    await settle();
+
+    expect(registry.get(conn.config.id)?.status).toBe("offline");
+    expect(sockets.map((socket) => socket.closed)).toEqual([false]);
+  });
+
+  it("refuses exec on a server last seen with an incompatible protocol, even while it is offline", async () => {
+    const getInfo = vi.fn().mockResolvedValue({ protocol: PROTOCOL_VERSION + 1 });
+    const client = Object.assign(clientWith({ getInfo }), { execSession: vi.fn() });
+    const registry = createServerRegistry({ createClient: () => client, pollIntervalMs: 1000 });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+    await expect(registry.execSession(conn.config.id, "session-1", { cmd: "true" })).rejects.toThrow("Upgrade Choux.");
+
+    getInfo.mockRejectedValueOnce(new Error("network"));
+    registry.refresh(conn.config.id);
+    await settle();
+
+    expect(registry.get(conn.config.id)?.status).toBe("offline");
+    await expect(registry.execSession(conn.config.id, "session-1", { cmd: "true" })).rejects.toThrow("Upgrade Choux.");
+    expect(client.execSession).not.toHaveBeenCalled();
+  });
+
+  it("closes the event stream when info reports an incompatible protocol while another request fails", async () => {
+    const getInfo = vi.fn().mockResolvedValue({ protocol: PROTOCOL_VERSION });
+    const client = clientWith({ getInfo });
+    const { sockets, createEventSocket } = recordingSockets();
+    const registry = createServerRegistry({ createClient: () => client, createEventSocket, pollIntervalMs: 1000 });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+
+    client.getSessions.mockRejectedValueOnce(new Error("not found"));
+    getInfo.mockResolvedValueOnce({ protocol: PROTOCOL_VERSION + 1 });
+    registry.refresh(conn.config.id);
+    await settle();
+
+    expect(registry.get(conn.config.id)?.status).toBe("offline");
+    expect(sockets.map((socket) => socket.closed)).toEqual([true]);
+  });
+
+  it("withdraws the server's questions when its event stream closes for an incompatible protocol", async () => {
+    const getInfo = vi.fn().mockResolvedValue({ protocol: PROTOCOL_VERSION });
+    const { sockets, createEventSocket } = recordingSockets();
+    const registry = createServerRegistry({ createClient: () => clientWith({ getInfo }), createEventSocket, pollIntervalMs: 1000 });
+    const conn = await registry.addServer({ url: "http://one.test", token: "one" });
+    await settle();
+    sockets[0]?.onmessage?.({
+      data: JSON.stringify({
+        t: "event",
+        requestId: "question-1",
+        ttl: 0,
+        event: { sessionId: "session-1", type: "choux.question", data: { message: "Write a file?", options: [{ id: "allow", label: "Allow" }] } },
+      }),
+    });
+    expect(registry.pendingQuestions).toHaveLength(1);
+
+    getInfo.mockResolvedValueOnce({ protocol: PROTOCOL_VERSION + 1 });
+    registry.refresh(conn.config.id);
+    await settle();
+
+    expect(registry.pendingQuestions).toHaveLength(0);
+  });
+});
+
 describe("server registry polling", () => {
   it("refreshes immediately and preserves last-good data after a transient failure", async () => {
     const client = clientWith({ sessions: [{ id: "old" }], workspaces: [{ id: "old-workspace" }] });

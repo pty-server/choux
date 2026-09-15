@@ -13,7 +13,7 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run -c vitest.integration.config.ts",
+    "test:integration": "vitest run -c vitest.integration.config.ts && cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

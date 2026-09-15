@@ -18,6 +18,7 @@ import {
 } from "../storage/serverConfigStore";
 import { tokenStore } from "../storage/tokenStore";
 import { agentStateKey, agentStatePane } from "../../registry/agentStateKey";
+import { incompatibleServerMessage } from "../../registry/protocolSupport";
 import { isAgentStateData, reduceAgentState, sweepAgentStates, type AgentStateData } from "./agentState";
 import type {
   PendingQuestion,
@@ -36,6 +37,11 @@ const TOOL_SETTLED_EVENTS = new Set(["PostToolUse", "PostToolUseFailure", "Permi
 
 function isEventData(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function fulfilledValue<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === "rejected") throw result.reason;
+  return result.value;
 }
 
 function isTitleEvent(value: unknown): value is { title: string } {
@@ -294,6 +300,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     conns.set(config.id, conn);
 
     let client: ReturnType<typeof createApiClient> | undefined;
+    let token: string | undefined;
     let inFlight = false;
     let pollQueued = false;
     let stopped = false;
@@ -419,6 +426,33 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       ));
     };
 
+    const openEventStream = (): void => {
+      if (stopped || eventStream !== undefined) return;
+      if (config.transport === "local" && config.instance) {
+        eventStream = new EventStreamController({
+          baseUrl: config.url,
+          createSocket: (url, protocols) => {
+            const target = new URL(url);
+            return localPtysSocket(config.instance!, `${target.pathname}${target.search}`, protocols);
+          },
+          onEvent: handleEvent,
+        });
+      } else if (createEventSocket !== undefined) {
+        eventStream = new EventStreamController({
+          baseUrl: config.url,
+          token,
+          createSocket: createEventSocket,
+          onEvent: handleEvent,
+        });
+      }
+    };
+
+    const closeEventStream = (): void => {
+      removeQuestionsForServer(config.id);
+      eventStream?.close();
+      eventStream = undefined;
+    };
+
     const poll = async (): Promise<void> => {
       if (stopped || !client) return;
       if (inFlight) {
@@ -430,12 +464,19 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       if (swept !== undefined) conn.agentStates = swept;
       const eventRevisionAtStart = sessionEventRevision;
       try {
-        const [sessions, workspaces, info] = await Promise.all([
+        const [sessionsResult, workspacesResult, infoResult] = await Promise.allSettled([
           client.getSessions(),
           client.getWorkspaces(),
           client.getInfo(),
         ]);
         if (stopped) return;
+        if (infoResult.status === "fulfilled" && protocolMismatch(PROTOCOL_VERSION, infoResult.value.protocol)) {
+          conn.info = infoResult.value;
+          closeEventStream();
+        }
+        const sessions = fulfilledValue(sessionsResult);
+        const workspaces = fulfilledValue(workspacesResult);
+        const info = fulfilledValue(infoResult);
         // A rename event can arrive while this request is in flight. Keep the
         // event-applied name until the next poll rather than restoring a
         // stale response for several seconds.
@@ -444,6 +485,8 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
         conn.info = info;
         conn.status = protocolMismatch(PROTOCOL_VERSION, info.protocol) ? "version-mismatch" : "online";
         conn.connectionError = undefined;
+        if (conn.status === "online") openEventStream();
+        else closeEventStream();
         if (conn.config.serverId !== info.serverId) {
           const updated = await persistUpdateServer(config.id, { serverId: info.serverId });
           if (updated && !stopped) conn.config = updated;
@@ -472,9 +515,7 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
     const controller: Controller = {
       stop() {
         stopped = true;
-        removeQuestionsForServer(config.id);
-        eventStream?.close();
-        eventStream = undefined;
+        closeEventStream();
         if (interval !== undefined) {
           clearInterval(interval);
           interval = undefined;
@@ -491,13 +532,13 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       },
       exec(sessionId, body) {
         if (stopped || !client) return Promise.reject(new Error("server is not connected"));
+        if (conn.info && protocolMismatch(PROTOCOL_VERSION, conn.info.protocol)) return Promise.reject(new Error(incompatibleServerMessage(conn.info)));
         return client.execSession(sessionId, body);
       },
     };
     controllers.set(config.id, controller);
 
     void (async () => {
-      let token: string | undefined;
       if (serverUsesToken(config)) {
         try {
           token = await tokenStore.get(config.tokenRef);
@@ -516,23 +557,6 @@ export function createServerRegistry(deps: ServerRegistryDeps = {}): ServerRegis
       }
       conn.storageError = undefined;
       client = createClient({ baseUrl: config.url, token, ...(config.transport === "local" && config.instance ? { localInstance: config.instance } : {}) });
-      if (config.transport === "local" && config.instance) {
-        eventStream = new EventStreamController({
-          baseUrl: config.url,
-          createSocket: (url, protocols) => {
-            const target = new URL(url);
-            return localPtysSocket(config.instance!, `${target.pathname}${target.search}`, protocols);
-          },
-          onEvent: handleEvent,
-        });
-      } else if (createEventSocket !== undefined) {
-        eventStream = new EventStreamController({
-          baseUrl: config.url,
-          token,
-          createSocket: createEventSocket,
-          onEvent: handleEvent,
-        });
-      }
       await poll();
       if (stopped) return;
       restartInterval();

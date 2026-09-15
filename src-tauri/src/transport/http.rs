@@ -6,6 +6,7 @@ use super::response::{ParseError, Response, ResponseParser};
 
 const READ_CHUNK_BYTES: usize = 16 * 1024;
 
+#[derive(Clone, Copy)]
 pub struct Request<'a> {
     pub method: &'a str,
     pub path: &'a str,
@@ -21,6 +22,7 @@ pub enum HttpError {
     InvalidPath,
     InvalidHeader,
     NotReusable,
+    NotSent(io::Error),
     Write(io::Error),
     Read(io::Error),
     ClosedBeforeResponse,
@@ -33,6 +35,7 @@ impl fmt::Display for HttpError {
             Self::InvalidMethod => formatter.write_str("invalid request method"),
             Self::InvalidPath => formatter.write_str("invalid request path"),
             Self::InvalidHeader => formatter.write_str("invalid request header"),
+            Self::NotSent(error) => write!(formatter, "could not send the request: {error}"),
             Self::NotReusable => formatter.write_str("the connection cannot carry another request"),
             Self::Write(error) => write!(formatter, "could not write the request: {error}"),
             Self::Read(error) => write!(formatter, "could not read the response: {error}"),
@@ -70,21 +73,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> HttpConnection<S> {
         if !self.reusable {
             return Err(HttpError::NotReusable);
         }
-        let head = request_head(request)?;
+        let mut message = request_head(request)?;
+        message.extend_from_slice(request.body.unwrap_or_default());
         self.reusable = false;
         self.parser.expect_response_to(request.method);
-        self.stream
-            .write_all(&head)
-            .await
-            .map_err(HttpError::Write)?;
-        self.stream
-            .write_all(request.body.unwrap_or_default())
-            .await
-            .map_err(HttpError::Write)?;
-        self.stream.flush().await.map_err(HttpError::Write)?;
+        self.write_message(&message).await?;
         let response = self.read_response().await?;
         self.reusable = request.keep_alive && response.keep_alive;
         Ok(response)
+    }
+
+    async fn write_message(&mut self, message: &[u8]) -> Result<(), HttpError> {
+        let mut written = 0;
+        while written < message.len() {
+            match self.stream.write(&message[written..]).await {
+                Ok(0) => return Err(write_failure(written, io::ErrorKind::WriteZero.into())),
+                Ok(count) => written += count,
+                Err(error) => return Err(write_failure(written, error)),
+            }
+        }
+        self.stream.flush().await.map_err(HttpError::Write)
     }
 
     async fn read_response(&mut self) -> Result<Response, HttpError> {
@@ -110,7 +118,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin> HttpConnection<S> {
     }
 }
 
-fn request_head(request: &Request<'_>) -> Result<Vec<u8>, HttpError> {
+#[cfg_attr(not(test), allow(dead_code))]
+impl<S> HttpConnection<S> {
+    pub fn is_reusable(&self) -> bool {
+        self.reusable
+    }
+
+    pub fn stream_mut(&mut self) -> &mut S {
+        &mut self.stream
+    }
+
+    pub fn into_stream(self) -> S {
+        self.stream
+    }
+}
+
+fn write_failure(written: usize, error: io::Error) -> HttpError {
+    if written == 0 {
+        HttpError::NotSent(error)
+    } else {
+        HttpError::Write(error)
+    }
+}
+
+pub(super) fn request_head(request: &Request<'_>) -> Result<Vec<u8>, HttpError> {
     if !is_token(request.method) {
         return Err(HttpError::InvalidMethod);
     }
