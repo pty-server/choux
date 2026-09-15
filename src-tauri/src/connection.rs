@@ -12,11 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
-use tokio_tungstenite::{
-    client_async,
-    tungstenite::{client::IntoClientRequest, protocol::CloseFrame, Message},
-    WebSocketStream,
-};
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, protocol::CloseFrame, Message};
 
 use crate::transport::{
     bridge::CommandSpec,
@@ -24,7 +20,7 @@ use crate::transport::{
     pool::{HttpPool, Lane, PoolError},
     response::Response,
     target::{Route, Target},
-    Connection, Endpoint,
+    Endpoint, WebSocket,
 };
 
 pub const PTYS_HOST: &str = "ptys.local";
@@ -154,19 +150,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-#[cfg(unix)]
-async fn local_endpoint(instance: &str) -> Result<Endpoint, String> {
-    crate::local_socket_for_instance(instance).await
-}
-
-#[cfg(not(unix))]
-async fn local_endpoint(_instance: &str) -> Result<Endpoint, String> {
-    Err("Local ptys servers are not supported on this platform.".into())
-}
-
 async fn endpoint_for(route: Route) -> Result<Endpoint, String> {
     match route {
-        Route::Local(instance) => local_endpoint(&instance).await,
+        Route::Local(instance) => crate::local_server::socket_endpoint(&instance).await,
         Route::Bridge(spec) => Ok(Endpoint::Command(spec)),
     }
 }
@@ -216,7 +202,8 @@ pub async fn ptys_request(
     };
     let response = match target.route()? {
         Route::Local(instance) => {
-            local_http_request(&local_endpoint(&instance).await?, &request).await?
+            let endpoint = crate::local_server::socket_endpoint(&instance).await?;
+            local_http_request(&endpoint, &request).await?
         }
         Route::Bridge(spec) => hub
             .pool(&target, spec)?
@@ -283,12 +270,8 @@ async fn open_socket(
     protocols: Vec<String>,
     outgoing: &mut mpsc::UnboundedReceiver<Message>,
     deadline: Duration,
-) -> Result<Option<WebSocketStream<Connection>>, String> {
+) -> Result<Option<WebSocket>, String> {
     let handshake = async {
-        let stream = endpoint
-            .connect()
-            .await
-            .map_err(|error| error.to_string())?;
         let mut request = url
             .into_client_request()
             .map_err(|error| error.to_string())?;
@@ -301,10 +284,7 @@ async fn open_socket(
                 .headers_mut()
                 .insert("Sec-WebSocket-Protocol", value);
         }
-        let (socket, _) = client_async(request, stream)
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>(socket)
+        endpoint.open_websocket(request).await
     };
     tokio::select! {
         opened = tokio::time::timeout(deadline, handshake) => match opened {
@@ -326,7 +306,10 @@ async fn relay_socket(
     protocols: Vec<String>,
     mut outgoing: mpsc::UnboundedReceiver<Message>,
 ) -> Result<(), String> {
-    let Some(socket) = open_socket(
+    let Some(WebSocket {
+        stream: socket,
+        process: _bridge,
+    }) = open_socket(
         endpoint,
         url,
         protocols,
@@ -464,12 +447,29 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn silent_bridge() -> Endpoint {
+    fn shell_bridge(script: &str) -> Endpoint {
         Endpoint::Command(CommandSpec {
             program: "sh".into(),
-            args: vec!["-c".into(), "exec sleep 30".into()],
+            args: vec!["-c".into(), script.into()],
             env: Vec::new(),
+            diagnostics: crate::transport::bridge::Diagnostics::Plain,
         })
+    }
+
+    #[cfg(unix)]
+    async fn open_events(
+        bridge: Endpoint,
+        receiver: &mut mpsc::UnboundedReceiver<Message>,
+        deadline: Duration,
+    ) -> Result<Option<WebSocket>, String> {
+        open_socket(
+            bridge,
+            "ws://default.ptys.local/v1/events",
+            Vec::new(),
+            receiver,
+            deadline,
+        )
+        .await
     }
 
     #[cfg(unix)]
@@ -483,10 +483,8 @@ mod tests {
 
         let opened = tokio::time::timeout(
             Duration::from_secs(5),
-            open_socket(
-                silent_bridge(),
-                "ws://default.ptys.local/v1/events",
-                Vec::new(),
+            open_events(
+                shell_bridge("exec sleep 30"),
                 &mut receiver,
                 Duration::from_secs(30),
             ),
@@ -502,10 +500,8 @@ mod tests {
     async fn gives_up_on_a_handshake_that_never_answers() {
         let (_sender, mut receiver) = mpsc::unbounded_channel();
 
-        let opened = open_socket(
-            silent_bridge(),
-            "ws://default.ptys.local/v1/events",
-            Vec::new(),
+        let opened = open_events(
+            shell_bridge("exec sleep 30"),
             &mut receiver,
             Duration::from_millis(200),
         )
@@ -514,6 +510,50 @@ mod tests {
         match opened {
             Err(message) => assert!(message.contains("did not open"), "{message}"),
             Ok(_) => panic!("a silent bridge opened a WebSocket"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reports_why_a_bridge_could_not_carry_the_handshake() {
+        let (_sender, mut receiver) = mpsc::unbounded_channel();
+
+        let opened = open_events(
+            shell_bridge("echo 'ptys bridge: no server is running' >&2; exit 4"),
+            &mut receiver,
+            Duration::from_secs(5),
+        )
+        .await;
+
+        match opened {
+            Err(message) => assert_eq!(
+                message,
+                "the bridge exited with code 4: ptys bridge: no server is running"
+            ),
+            Ok(_) => panic!("a failed bridge opened a WebSocket"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn keeps_the_server_answer_when_a_healthy_bridge_refuses_the_upgrade() {
+        let (_sender, mut receiver) = mpsc::unbounded_channel();
+
+        let opened = open_events(
+            shell_bridge(
+                "head -c 1 >/dev/null; printf 'HTTP/1.1 404 Not Found\\r\\nContent-Length: 0\\r\\n\\r\\n'",
+            ),
+            &mut receiver,
+            Duration::from_secs(5),
+        )
+        .await;
+
+        match opened {
+            Err(message) => assert!(
+                message.contains("404") && !message.contains("bridge"),
+                "{message}"
+            ),
+            Ok(_) => panic!("a refused upgrade opened a WebSocket"),
         }
     }
 

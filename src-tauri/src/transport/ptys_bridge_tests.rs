@@ -22,7 +22,7 @@ use tokio_tungstenite::{
 };
 
 use super::{
-    bridge::CommandSpec,
+    bridge::{CommandSpec, Diagnostics},
     http::Request,
     pool::{Connector, HttpPool, Lane, PoolError},
     target::{Route, Target},
@@ -141,6 +141,7 @@ impl PtysServer {
             program: "env".into(),
             args,
             env: Vec::new(),
+            diagnostics: Diagnostics::Plain,
         })
     }
 }

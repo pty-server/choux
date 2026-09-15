@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 use serde::Deserialize;
 
-use super::bridge::CommandSpec;
+use super::bridge::{CommandSpec, Diagnostics};
 
 const SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const SSH_CONNECT_TIMEOUT_SECONDS: u32 = 10;
@@ -209,6 +209,7 @@ fn ssh_bridge(host: &str, instance: &str, path: Option<String>) -> CommandSpec {
         program: "ssh".into(),
         args: args.into_iter().map(OsString::from).collect(),
         env: Vec::new(),
+        diagnostics: Diagnostics::Plain,
     }
 }
 
@@ -225,6 +226,7 @@ fn wsl_bridge(distro: &str, user: &str, instance: &str, path: String) -> Command
         program: "wsl.exe".into(),
         args,
         env: vec![("WSL_UTF8".into(), "1".into())],
+        diagnostics: Diagnostics::Wsl,
     }
 }
 
@@ -315,6 +317,7 @@ mod tests {
             ]
         );
         assert!(spec.env.is_empty());
+        assert_eq!(spec.diagnostics, Diagnostics::Plain);
     }
 
     #[test]
@@ -360,6 +363,7 @@ mod tests {
             ]
         );
         assert_eq!(spec.env, [("WSL_UTF8".into(), "1".into())]);
+        assert_eq!(spec.diagnostics, Diagnostics::Wsl);
     }
 
     #[test]

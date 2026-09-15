@@ -4,12 +4,11 @@ use std::{
     sync::OnceLock,
 };
 
-use crate::shell_var;
+use crate::local_server::shell_var;
 
 const LOCALE_VARS: [&str; 3] = ["LC_ALL", "LC_CTYPE", "LANG"];
 const UTF8_CODESET: &str = "utf8";
 
-#[cfg(not(target_os = "windows"))]
 fn host_locales() -> Vec<String> {
     let Ok(output) = Command::new("locale")
         .arg("-a")
@@ -25,11 +24,6 @@ fn host_locales() -> Vec<String> {
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-#[cfg(target_os = "windows")]
-fn host_locales() -> Vec<String> {
-    Vec::new()
 }
 
 fn normalized_codeset(value: &str) -> String {
