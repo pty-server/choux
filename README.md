@@ -34,13 +34,13 @@ Download the `.deb` or `.AppImage` from [Releases](https://github.com/pty-server
 
 ### Windows
 
-Download `choux_<version>_x64-setup.exe` from [Releases](https://github.com/pty-server/choux/releases). The installer is not code-signed, so SmartScreen warns first: choose **More info**, then **Run anyway**. It asks whether to install for you only or for everyone on the machine; installing for everyone needs administrator rights. WebView2 is part of Windows 11, and the installer downloads it only when it is missing.
+Download `choux_<version>_x64-setup.exe` from [Releases](https://github.com/pty-server/choux/releases). The installer is not code-signed, so SmartScreen warns first: choose **More info**, then **Run anyway**. It installs for your account only and needs no administrator rights. WebView2 is part of Windows 11, and the installer downloads it only when it is missing.
 
 Choux runs natively on Windows, while ptys runs inside WSL 2 - see [Connecting to ptys](#connecting-to-ptys).
 
 ### Updates
 
-Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root. On Windows the installer shows a progress window and reopens Choux. An installation for everyone updates in place only from an administrator account, which asks for approval; from a standard account the update installs a separate copy for that user instead, so leave those updates to an administrator.
+Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root. On Windows the installer shows a progress window and reopens Choux.
 
 ## Connecting to ptys
 
