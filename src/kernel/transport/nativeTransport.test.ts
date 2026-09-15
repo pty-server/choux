@@ -47,6 +47,17 @@ describe("nativeRequest", () => {
     expect(invoke.mock.calls[0][1].target).not.toBe(target);
   });
 
+  it("rejects with an Error carrying the native command's message", async () => {
+    const { nativeRequest } = await import("./nativeTransport");
+    const { describeConnectionFailure } = await import("./api");
+    invoke.mockRejectedValue("WSL distribution Debian is not running.");
+
+    const error = await nativeRequest(ssh, "/v1/info").catch((failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(describeConnectionFailure(error)).toBe("WSL distribution Debian is not running.");
+  });
+
   it("retains and releases a transport only in the desktop app", async () => {
     const { releaseNativeTransport, retainNativeTransport } = await import("./nativeTransport");
     await retainNativeTransport(ssh);

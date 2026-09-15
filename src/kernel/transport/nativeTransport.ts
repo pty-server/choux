@@ -29,7 +29,11 @@ function plainTarget(target: ServerTransport): ServerTransport {
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauriRuntime()) throw new Error("Native ptys connections are available only in the desktop app.");
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
-  return (tauriInvoke as TauriInvoke)<T>(command, args);
+  try {
+    return await (tauriInvoke as TauriInvoke)<T>(command, args);
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
 }
 
 export async function nativeRequest(
