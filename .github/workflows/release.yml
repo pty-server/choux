@@ -78,6 +78,10 @@ jobs:
             os: macos-latest
             args: "--target aarch64-apple-darwin"
             rust_targets: aarch64-apple-darwin
+          - name: Windows x64 (NSIS, unsigned)
+            os: windows-latest
+            args: ""
+            rust_targets: ""
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -165,6 +169,25 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+      - name: Verify a single signed x64 installer
+        if: runner.os == 'Windows'
+        run: |
+          shopt -s nullglob
+          bundle="src-tauri/target/release/bundle/nsis"
+          installers=("$bundle"/*.exe)
+          if [ "${#installers[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one installer, found ${#installers[@]}"
+            exit 1
+          fi
+          case "${installers[0]}" in
+            *_x64-setup.exe) echo "${installers[0]}" ;;
+            *) echo "::error::installer is not x64: ${installers[0]}"; exit 1 ;;
+          esac
+          if [ ! -s "${installers[0]}.sig" ]; then
+            echo "::error::${installers[0]} has no signature"
+            exit 1
+          fi
 
       # The dmg bundler folds the .app into the disk image and then deletes it,
       # so the shipped app can only be verified from inside the mounted dmg and
@@ -306,7 +329,8 @@ jobs:
           missing=""
           for expected in "choux_${version}_aarch64.dmg" \
                           "choux_${version}_amd64.deb" \
-                          "choux_${version}_amd64.AppImage"; do
+                          "choux_${version}_amd64.AppImage" \
+                          "choux_${version}_x64-setup.exe"; do
             printf '%s\n' "$names" | grep -qxF "$expected" || missing="$missing $expected"
           done
           if [ -n "$missing" ]; then
@@ -339,7 +363,8 @@ jobs:
           missing=""
           for targets in "darwin-aarch64-app darwin-aarch64" \
                          "linux-x86_64-appimage linux-x86_64" \
-                         "linux-x86_64-deb"; do
+                         "linux-x86_64-deb" \
+                         "windows-x86_64-nsis windows-x86_64"; do
             found=""
             for target in $targets; do
               if jq -e --arg target "$target" \

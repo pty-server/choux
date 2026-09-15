@@ -32,17 +32,24 @@ Apple Silicon only. Intel Macs get an architecture error from Homebrew instead o
 
 Download the `.deb` or `.AppImage` from [Releases](https://github.com/pty-server/choux/releases).
 
+### Windows
+
+Download `choux_<version>_x64-setup.exe` from [Releases](https://github.com/pty-server/choux/releases). The installer is not code-signed, so SmartScreen warns first: choose **More info**, then **Run anyway**. It asks whether to install for you only or for everyone on the machine; installing for everyone needs administrator rights. WebView2 is part of Windows 11, and the installer downloads it only when it is missing.
+
+Choux runs natively on Windows, while ptys runs inside WSL 2 - see [Connecting to ptys](#connecting-to-ptys).
+
 ### Updates
 
-Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root.
+Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root. On Windows the installer shows a progress window and reopens Choux. An installation for everyone updates in place only from an administrator account, which asks for approval; from a standard account the update installs a separate copy for that user instead, so leave those updates to an administrator.
 
 ## Connecting to ptys
 
-Choux reaches a ptys server in one of three ways, managed under **Manage servers**:
+Choux reaches a ptys server in one of four ways, managed under **Manage servers**:
 
-- **Local.** On launch the desktop app finds the ptys daemons running as your user and connects through each daemon's private Unix control socket, with no token. If none is running, Choux offers to install and start ptys.
+- **Local** (Linux and macOS). On launch the desktop app finds the ptys daemons running as your user and connects through each daemon's private Unix control socket, with no token. If none is running, Choux offers to install and start ptys.
 - **URL.** Any ptys server listening on HTTP(S), with its bearer token, or without one for a server started with authentication disabled. This is the only option in the browser build.
 - **SSH** (desktop app only). Choux runs `ssh <host> ptys bridge --instance <name>` and talks to the remote daemon through that pipe, so nothing has to listen on the network and no token is needed. The remote host needs ptys 0.3.0 or newer with its daemon running, and key or agent authentication with a known host key: ssh runs non-interactively, so password and host-key prompts cannot be answered. When `ptys` is not on the remote non-interactive `PATH`, as with nvm, set the node bin directory, for example `/home/me/.nvm/versions/node/v24.21.0/bin`.
+- **WSL** (Windows only). ptys runs as an ordinary Linux install inside a WSL 2 distribution, and Choux runs `wsl.exe --exec ptys bridge --instance <name>` as the chosen Linux user, so nothing listens on the network and no token is needed. On launch Choux finds the daemons in distributions that are already running, and connected servers never boot a stopped distribution. If it finds none, **Run ptys in WSL** checks a distribution, installs ptys from npm and starts the daemon; checking a stopped distribution starts it. Node.js must already be installed in the distribution, for example with nvm - Choux does not install it. Requires WSL 2.0.0 or newer; WSL 1 distributions are not supported.
 
 ## Platform targets
 
@@ -50,8 +57,7 @@ Choux reaches a ptys server in one of three ways, managed under **Manage servers
 |----------|--------------|--------|
 | Linux | x86_64 | `.deb`, `.AppImage` |
 | macOS | arm64 | `.dmg` (signed, notarized) |
-
-Windows is not yet supported - local ptys discovery uses a Unix control socket.
+| Windows | x86_64 | `_x64-setup.exe` (NSIS, unsigned) |
 
 ## Development prerequisites
 
@@ -86,7 +92,7 @@ npm run typecheck          # tsc --noEmit
 npm run test:integration   # integration tests against a real ptys server
 ```
 
-`npm test`, `npm run lint` and `npm run typecheck` are the CI gates. The integration suite is not run in CI: it spawns a real ptys server from a local ptys checkout, so it only runs when one is present and built.
+`npm test`, `npm run lint` and `npm run typecheck` are the CI gates, plus a Windows job that runs `cargo clippy`, the Rust unit tests and a release build without bundling. The integration suite is not run in CI: it spawns a real ptys server from a local ptys checkout, so it only runs when one is present and built.
 
 ## Supported custom events
 
