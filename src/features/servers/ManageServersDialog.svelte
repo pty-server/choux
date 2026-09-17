@@ -7,6 +7,7 @@
   import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
   import { emptySshFields, sshFields, sshProblem, sshTransport, type SshFields } from "./sshDraft";
   import { detectSummary, emptyWslFields, wslFields, wslFieldsTransport, wslProblem, type WslFields } from "./wslDraft";
+  import { waitUntilOnline } from "./wslStart";
 
   interface Draft {
     label: string;
@@ -135,7 +136,8 @@
     try {
       await wsl.start(transport);
       await wsl.refresh();
-      registry.refresh(id);
+      const online = await waitUntilOnline(() => registry.get(id)?.status, () => registry.refresh(id));
+      if (!online) startFailures[id] = `${transport.distro} started, but Choux could not connect to ptys yet.`;
     } catch (err) {
       startFailures[id] = err instanceof Error ? err.message : String(err);
     } finally {

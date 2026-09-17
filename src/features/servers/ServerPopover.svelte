@@ -5,7 +5,7 @@
   import type { WslServerTools, WslTransport } from "../../registry/wsl";
   import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
   import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
-  import { stoppedWslTransport } from "./wslStart";
+  import { stoppedWslTransport, waitUntilOnline } from "./wslStart";
 
   interface Props {
     wsl?: WslServerTools;
@@ -26,7 +26,8 @@
     try {
       await wsl.start(transport);
       await wsl.refresh();
-      registry.refresh(id);
+      const online = await waitUntilOnline(() => registry.get(id)?.status, () => registry.refresh(id));
+      if (!online) startFailures[id] = `${transport.distro} started, but Choux could not connect to ptys yet.`;
     } catch (err) {
       startFailures[id] = err instanceof Error ? err.message : String(err);
     } finally {
@@ -81,7 +82,9 @@
               {#if ptysUpdate}
                 <span class="ptys-update" title={`Update with: ${PTYS_UPDATE_COMMAND}`}>ptys {conn.info?.version} → {ptysUpdate} available</span>
               {/if}
-              {#if startFailures[conn.config.id]}
+              {#if startingId === conn.config.id}
+                <span class="starting">Starting...</span>
+              {:else if startFailures[conn.config.id]}
                 <span class="connection-error" title={startFailures[conn.config.id]}>{startFailures[conn.config.id]}</span>
               {:else if conn.connectionError}
                 <span class="connection-error" title={conn.connectionError}>{conn.connectionError}</span>
@@ -212,6 +215,14 @@
   }
 
   .checkmark { color: var(--status-online); }
+
+  .starting {
+    overflow: hidden;
+    color: var(--status-warn);
+    font-size: 0.75rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .start {
     flex: none;

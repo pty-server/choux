@@ -17,3 +17,20 @@ export function stoppedWslTransport(
   const distro = distros.find((candidate) => candidate.name === transport.distro);
   return distro !== undefined && !distro.running ? transport : undefined;
 }
+
+export const SERVER_START_ATTEMPTS = 30;
+export const SERVER_START_INTERVAL_MS = 500;
+
+export async function waitUntilOnline(
+  status: () => ServerStatus | undefined,
+  refresh: () => void,
+  attempts = SERVER_START_ATTEMPTS,
+  intervalMs = SERVER_START_INTERVAL_MS,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    refresh();
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (status() === "online") return true;
+  }
+  return false;
+}

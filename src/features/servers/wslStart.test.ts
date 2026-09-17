@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerStatus } from "../../registry/types";
 import type { WslDistro } from "../../registry/wsl";
-import { stoppedWslTransport, type StartableServer } from "./wslStart";
+import { stoppedWslTransport, waitUntilOnline, type StartableServer } from "./wslStart";
 
 const debian: WslDistro = { name: "Debian", default: true, running: false, version: 2 };
 const ubuntu: WslDistro = { name: "Ubuntu", default: false, running: true, version: 2 };
@@ -31,5 +31,40 @@ describe("stoppedWslTransport", () => {
     expect(stoppedWslTransport(server(undefined), [debian])).toBeUndefined();
     expect(stoppedWslTransport(server({ kind: "local", instance: "default" }), [debian])).toBeUndefined();
     expect(stoppedWslTransport(server({ kind: "wsl", distro: "Debian", user: "", instance: "default" }), [debian])).toBeUndefined();
+  });
+});
+
+describe("waitUntilOnline", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps polling while the daemon is still coming up, then reports the connection", async () => {
+    let status: ServerStatus = "offline";
+    let polls = 0;
+    const refresh = () => {
+      polls += 1;
+      if (polls === 3) status = "online";
+    };
+
+    const settled = waitUntilOnline(() => status, refresh, 10, 100);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(await settled).toBe(true);
+    expect(polls).toBe(3);
+  });
+
+  it("gives up after the last attempt so a distribution that never serves is reported", async () => {
+    let polls = 0;
+
+    const settled = waitUntilOnline(() => "offline", () => { polls += 1; }, 4, 100);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(await settled).toBe(false);
+    expect(polls).toBe(4);
   });
 });
