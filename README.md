@@ -34,7 +34,7 @@ Download the `.deb` or `.AppImage` from [Releases](https://github.com/pty-server
 
 ### Windows
 
-Download `choux_<version>_x64-setup.exe` from [Releases](https://github.com/pty-server/choux/releases). The installer is not code-signed, so SmartScreen warns first: choose **More info**, then **Run anyway**. It installs for your account only and needs no administrator rights. WebView2 is part of Windows 11, and the installer downloads it only when it is missing.
+Download `choux_<version>_x64-setup.exe` from [Releases](https://github.com/pty-server/choux/releases). The installer is not code-signed, so Windows warns about it twice. The browser warns first - Microsoft Edge reports that the file "isn't commonly downloaded" and hides **Keep** behind the arrow next to **Delete**. Windows warns again when you run it, with "Windows protected your PC" and an unknown publisher: choose **Run anyway** (behind **More info** if it is not shown). Dismissing the browser warning in some ways clears the file's mark of the web, and the second warning is then skipped. It installs for your account only and needs no administrator rights. WebView2 is part of Windows 11, and the installer downloads it only when it is missing.
 
 Choux runs natively on Windows, while ptys runs inside WSL 2 - see [Connecting to ptys](#connecting-to-ptys).
 
