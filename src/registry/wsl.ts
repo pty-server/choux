@@ -36,6 +36,8 @@ export interface WslServerTools {
   readonly distros: readonly WslDistro[];
   detect(distro: string, user: string | undefined): Promise<WslProbe>;
   start(transport: WslTransport): Promise<void>;
+  /** Re-reads `wsl -l -v`, so a distribution started from the UI stops being labelled stopped. */
+  refresh(): Promise<void>;
 }
 
 export function wslHost(distro: string, found: { readonly user: string; readonly nodeBin?: string }): WslHost {

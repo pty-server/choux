@@ -105,6 +105,7 @@
     distros: wslStatus.distros,
     detect: (distro, user) => wslBridge!.probe(distro, user),
     start: (transport) => wslBridge!.start(wslHost(transport.distro, transport), transport.instance),
+    refresh: async () => { await refreshWslStatus(wslBridge!); },
   } : undefined);
   let settingsOpen = $state(false);
   let terminalSettings = $state<TerminalSettings>({

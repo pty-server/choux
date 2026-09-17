@@ -2,17 +2,37 @@
   import { useServerRegistry } from "../../registry/context";
   import { serverAddressSummary } from "../../registry/serverTransport";
   import type { ServerStatus } from "../../registry/types";
+  import type { WslServerTools, WslTransport } from "../../registry/wsl";
   import { PTYS_UPDATE_COMMAND, ptysUpdateFor } from "./ptysRelease";
   import { ptysReleaseWatch } from "./ptysReleaseWatch.svelte";
+  import { stoppedWslTransport } from "./wslStart";
 
   interface Props {
+    wsl?: WslServerTools;
     onClose: () => void;
     onManage: (focusServerId?: string) => void;
   }
 
-  let { onClose, onManage }: Props = $props();
+  let { wsl, onClose, onManage }: Props = $props();
   const registry = useServerRegistry();
   let panel = $state<HTMLDivElement>();
+  let startingId = $state<string>();
+  let startFailures = $state<Record<string, string>>({});
+
+  async function startDistro(id: string, transport: WslTransport) {
+    if (!wsl) return;
+    startingId = id;
+    startFailures[id] = "";
+    try {
+      await wsl.start(transport);
+      await wsl.refresh();
+      registry.refresh(id);
+    } catch (err) {
+      startFailures[id] = err instanceof Error ? err.message : String(err);
+    } finally {
+      startingId = undefined;
+    }
+  }
 
   function statusDot(status: ServerStatus): "online" | "warn" | "offline" {
     if (status === "online") return "online";
@@ -50,6 +70,7 @@
     {:else}
       {#each registry.servers as conn (conn.config.id)}
         {@const ptysUpdate = ptysUpdateFor(conn.info?.version, ptysReleaseWatch.latest)}
+        {@const stopped = wsl ? stoppedWslTransport(conn, wsl.distros) : undefined}
         <div class="row">
           <button type="button" class="row-main" onclick={() => void registry.setDefault(conn.config.id)}>
             <span class="swatch" style:background={conn.config.accent}></span>
@@ -60,7 +81,9 @@
               {#if ptysUpdate}
                 <span class="ptys-update" title={`Update with: ${PTYS_UPDATE_COMMAND}`}>ptys {conn.info?.version} → {ptysUpdate} available</span>
               {/if}
-              {#if conn.connectionError}
+              {#if startFailures[conn.config.id]}
+                <span class="connection-error" title={startFailures[conn.config.id]}>{startFailures[conn.config.id]}</span>
+              {:else if conn.connectionError}
                 <span class="connection-error" title={conn.connectionError}>{conn.connectionError}</span>
               {/if}
             </span>
@@ -69,6 +92,15 @@
               <span class="checkmark" aria-label="Default server">✓</span>
             {/if}
           </button>
+          {#if stopped}
+            <button
+              type="button"
+              class="start"
+              disabled={startingId === conn.config.id}
+              title={`Start WSL distribution ${stopped.distro} and connect`}
+              onclick={(event) => { event.stopPropagation(); void startDistro(conn.config.id, stopped); }}
+            >{startingId === conn.config.id ? "Starting..." : `Start ${stopped.distro}`}</button>
+          {/if}
           <span class="row-actions">
             <button type="button" title="Reconnect" aria-label="Reconnect" onclick={(event) => { event.stopPropagation(); registry.refresh(conn.config.id); }}>↻</button>
             <button type="button" title="Edit server" aria-label="Edit server" onclick={(event) => { event.stopPropagation(); onManage(conn.config.id); }}>✎</button>
@@ -180,6 +212,24 @@
   }
 
   .checkmark { color: var(--status-online); }
+
+  .start {
+    flex: none;
+    margin-right: var(--sp-2);
+    padding: 2px var(--sp-2);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .start:disabled {
+    color: var(--fg-dim);
+    cursor: default;
+  }
 
   .row-actions {
     display: flex;

@@ -264,6 +264,7 @@
     onToggleRail={() => void toggleRail()}
     onToggleSidebar={() => (sidebarCollapsed = !sidebarCollapsed)}
     onManageServers={openManageServers}
+    {wsl}
     {topBar}
   />
 

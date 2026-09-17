@@ -134,6 +134,7 @@
     startFailures[id] = "";
     try {
       await wsl.start(transport);
+      await wsl.refresh();
       registry.refresh(id);
     } catch (err) {
       startFailures[id] = err instanceof Error ? err.message : String(err);

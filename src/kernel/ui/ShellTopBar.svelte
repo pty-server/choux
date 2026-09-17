@@ -2,6 +2,7 @@
   import { onMount, type Snippet } from "svelte";
   import ServerPopover from "../../features/servers/ServerPopover.svelte";
   import type { AggregateServerStatus } from "../../registry/types";
+  import type { WslServerTools } from "../../registry/wsl";
   import { isMacPlatform } from "../extensibility/keydispatch";
   import { appUpdateButtonLabel, appUpdateStatusText } from "../../registry/appUpdate";
   import { appUpdateWatch } from "../platform/appUpdateWatch.svelte";
@@ -13,6 +14,7 @@
     onToggleRail: () => void;
     onToggleSidebar: () => void;
     onManageServers: (focusServerId?: string) => void;
+    wsl?: WslServerTools;
     topBar?: Snippet;
   }
 
@@ -23,6 +25,7 @@
     onToggleRail,
     onToggleSidebar,
     onManageServers,
+    wsl,
     topBar,
   }: Props = $props();
 
@@ -151,6 +154,7 @@
     </button>
     {#if showServerPopover}
       <ServerPopover
+        {wsl}
         onClose={() => (showServerPopover = false)}
         onManage={(focusServerId) => {
           showServerPopover = false;
