@@ -135,4 +135,63 @@ describe("createAppUpdateWatch", () => {
     await installing;
     stop();
   });
+
+  it("re-checks on the new channel and forgets what the old one offered", async () => {
+    const check = vi.fn<AppUpdateBridge["check"]>()
+      .mockResolvedValueOnce(pendingUpdate("0.3.0"))
+      .mockResolvedValueOnce(undefined);
+    const watch = createAppUpdateWatch(fakeBridge({ check }));
+
+    await watch.checkNow();
+    expect(watch.status).toEqual({ phase: "available", version: "0.3.0" });
+
+    watch.setChannel("rc");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(watch.channel).toBe("rc");
+    expect(check).toHaveBeenLastCalledWith("rc");
+    expect(watch.status).toEqual({ phase: "current" });
+  });
+
+  it("drops a check that only answers after the channel changed", async () => {
+    let answerFirst: (update: PendingAppUpdate | undefined) => void = () => {};
+    const check = vi.fn<AppUpdateBridge["check"]>()
+      .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve; }))
+      .mockResolvedValue(undefined);
+    const watch = createAppUpdateWatch(fakeBridge({ check }));
+
+    const outstanding = watch.checkNow();
+    watch.setChannel("rc");
+    answerFirst(pendingUpdate("0.4.0-rc.1"));
+    await outstanding;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(watch.channel).toBe("rc");
+    expect(watch.status).toEqual({ phase: "current" });
+  });
+
+  it("ignores a switch to the channel already in use", async () => {
+    const check = vi.fn<AppUpdateBridge["check"]>().mockResolvedValue(undefined);
+    const watch = createAppUpdateWatch(fakeBridge({ check }));
+
+    watch.setChannel("stable");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(watch.channel).toBe("stable");
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("restores a saved channel without checking, because start checks anyway", async () => {
+    const check = vi.fn<AppUpdateBridge["check"]>().mockResolvedValue(undefined);
+    const watch = createAppUpdateWatch(fakeBridge({ check }));
+
+    watch.restoreChannel("rc");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(check).not.toHaveBeenCalled();
+
+    const stop = watch.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(check).toHaveBeenCalledWith("rc");
+    stop();
+  });
 });

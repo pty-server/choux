@@ -10,6 +10,7 @@ use tauri::{
 #[cfg(target_os = "linux")]
 use tauri_plugin_deep_link::DeepLinkExt;
 
+mod app_update;
 mod connection;
 mod local_server;
 #[cfg(unix)]
@@ -225,7 +226,9 @@ fn app_bundle_read_only() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default().manage(connection::ConnectionHub::default());
+    let mut builder = tauri::Builder::default()
+        .manage(connection::ConnectionHub::default())
+        .manage(app_update::PendingUpdate::default());
 
     // Linux opens a protocol activation in a new process. This plugin forwards
     // it to the existing window and exits the new process instead.
@@ -307,6 +310,8 @@ pub fn run() {
             connection::ptys_socket_send,
             connection::ptys_socket_close,
             app_bundle_read_only,
+            app_update::app_update_check,
+            app_update::app_update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running choux");

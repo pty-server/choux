@@ -33,6 +33,8 @@
   import { applyGlobalShortcut, globalShortcutSupported } from "./kernel/platform/globalShortcut";
   import { defaultGlobalShortcutSettings, type GlobalShortcutSettings } from "./registry/globalShortcut";
   import { getEventSettings, saveEventSettings } from "./kernel/storage/eventSettingsStore";
+  import { getUpdateChannel, saveUpdateChannel } from "./kernel/storage/updateChannelStore";
+  import type { UpdateChannel } from "./registry/appUpdate";
   import { defaultEventSettings, type EventSettings } from "./registry/eventSettings";
   import { revealAndFocusCurrentWindow } from "./kernel/platform/windowAttention";
   import { suppressNativeContextMenu } from "./kernel/platform/nativeContextMenu";
@@ -138,7 +140,9 @@
     let unlisten = () => {};
     const restoreNativeContextMenu = suppressNativeContextMenu();
     const stopPtysReleaseWatch = ptysReleaseWatch.start();
-    const stopAppUpdateWatch = appUpdateWatch.start();
+    // Started only once the saved channel is known, so the first check cannot
+    // ask the stable endpoint on behalf of someone following release candidates.
+    let stopAppUpdateWatch = () => {};
 
     void (async () => {
       try {
@@ -147,6 +151,8 @@
         globalShortcut = await getGlobalShortcutSettings();
         if (globalShortcut.enabled) void applyGlobalShortcut(globalShortcut);
         eventSettings = await getEventSettings();
+        appUpdateWatch.restoreChannel(await getUpdateChannel());
+        if (!disposed) stopAppUpdateWatch = appUpdateWatch.start();
         keybindingOverrides = await getKeybindingOverrides();
         sessionProfiles = await getSessionProfiles();
         await registry.load();
@@ -713,6 +719,11 @@
     eventSettings = { ...settings };
   }
 
+  async function handleSelectUpdateChannel(channel: UpdateChannel): Promise<void> {
+    await saveUpdateChannel(channel);
+    appUpdateWatch.setChannel(channel);
+  }
+
   async function handleSaveKeybindings(overrides: KeybindingOverrides): Promise<void> {
     await saveKeybindingOverrides(overrides);
     keybindingOverrides = { ...overrides };
@@ -787,6 +798,7 @@
           appUpdate={appUpdateWatch}
           onCheckForUpdates={() => void appUpdateWatch.checkNow()}
           onInstallUpdate={() => void appUpdateWatch.install()}
+          onSelectUpdateChannel={(channel) => void handleSelectUpdateChannel(channel)}
         />
       {:else}
         <div class="attach-container" bind:this={mainContainer}>

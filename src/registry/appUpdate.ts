@@ -6,10 +6,29 @@ export type AppUpdateStatus =
   | { phase: "installing"; version: string; progress: number | undefined }
   | { phase: "failed"; version: string | undefined; message: string };
 
+export type UpdateChannel = "stable" | "rc";
+
+export const defaultUpdateChannel: UpdateChannel = "stable";
+
 export interface AppUpdateState {
   readonly supported: boolean;
   readonly currentVersion: string | undefined;
   readonly status: AppUpdateStatus;
+  readonly channel: UpdateChannel;
+}
+
+export function normalizeUpdateChannel(value: unknown): UpdateChannel {
+  return value === "rc" ? "rc" : defaultUpdateChannel;
+}
+
+export function updateChannelLabel(channel: UpdateChannel): string {
+  return channel === "rc" ? "Release candidates" : "Stable";
+}
+
+export function updateChannelDescription(channel: UpdateChannel): string {
+  return channel === "rc"
+    ? "Every release, including prereleases, as soon as it ships."
+    : "Finished releases only.";
 }
 
 export function installableUpdateVersion(status: AppUpdateStatus): string | undefined {

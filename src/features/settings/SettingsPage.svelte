@@ -27,7 +27,7 @@
     type SessionProfileDraft,
     type SessionProfiles,
   } from "../../registry/sessionProfiles";
-  import type { AppUpdateState } from "../../registry/appUpdate";
+  import type { AppUpdateState, UpdateChannel } from "../../registry/appUpdate";
   import IntegrationsCard from "./IntegrationsCard.svelte";
   import UpdatesCard from "./UpdatesCard.svelte";
 
@@ -56,6 +56,7 @@
     appUpdate: AppUpdateState;
     onCheckForUpdates: () => void;
     onInstallUpdate: () => void;
+    onSelectUpdateChannel: (channel: UpdateChannel) => void;
   }
 
   let {
@@ -79,6 +80,7 @@
     appUpdate,
     onCheckForUpdates,
     onInstallUpdate,
+    onSelectUpdateChannel,
   }: Props = $props();
   let draft = $derived<TerminalSettings>({ ...settings, theme: { ...settings.theme } });
   let saving = $state(false);
@@ -532,7 +534,7 @@
   <IntegrationsCard {copyText} {openUrl} />
 
   {#if appUpdate.supported}
-    <UpdatesCard update={appUpdate} onCheck={onCheckForUpdates} onInstall={onInstallUpdate} />
+    <UpdatesCard update={appUpdate} onCheck={onCheckForUpdates} onInstall={onInstallUpdate} onSelectChannel={onSelectUpdateChannel} />
   {/if}
 </section>
 

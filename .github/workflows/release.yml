@@ -168,6 +168,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
           args: ${{ matrix.args }}
 
       - name: Verify a single signed x64 installer
@@ -358,6 +359,12 @@ jobs:
           announced="$(jq -r .version latest.json)"
           if [ "$announced" != "$version" ]; then
             echo "::error::latest.json announces $announced, expected $version"
+            exit 1
+          fi
+          stray="$(jq -r --arg tag "/releases/download/$GITHUB_REF_NAME/" \
+            '.platforms | to_entries[] | select((.value.url // "") | contains($tag) | not) | .key' latest.json)"
+          if [ -n "$stray" ]; then
+            echo "::error::latest.json urls are not pinned to $GITHUB_REF_NAME:" $stray
             exit 1
           fi
           missing=""

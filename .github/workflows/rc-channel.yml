@@ -1,0 +1,59 @@
+name: Publish rc updater manifest
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rc-updater-manifest
+  cancel-in-progress: false
+
+jobs:
+  publish-manifest:
+    name: Copy latest.json to the rc channel
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the manifest from the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir .
+          jq . latest.json
+          announced="$(jq -r .version latest.json)"
+          if [ "$announced" != "${TAG#v}" ]; then
+            echo "::error::latest.json announces $announced, expected ${TAG#v}"
+            exit 1
+          fi
+
+      - name: Check every download url is pinned to this tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          stray="$(jq -r --arg tag "/releases/download/$TAG/" \
+            '.platforms | to_entries[] | select((.value.url // "") | contains($tag) | not) | .key' latest.json)"
+          if [ -n "$stray" ]; then
+            echo "::error::latest.json urls are not pinned to $TAG:" $stray
+            exit 1
+          fi
+
+      - name: Replace the manifest on the rc channel release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view rc --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::the rc channel release is missing; create it once with: gh release create rc --title 'rc channel' --notes 'Updater manifest for the rc channel.' --prerelease"
+            exit 1
+          fi
+          # --clobber deletes before it uploads, so the channel 404s for that moment.
+          # GitHub offers no atomic replace; the assertion below catches a failed swap.
+          gh release upload rc latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view rc --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | tee uploaded.txt
+          grep -qx latest.json uploaded.txt || {
+            echo "::error::latest.json is missing from the rc channel after the upload"
+            exit 1
+          }

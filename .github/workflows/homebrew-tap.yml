@@ -4,12 +4,17 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: homebrew-tap
+  cancel-in-progress: false
+
 jobs:
   update-cask:
-    name: Bump choux cask
+    name: Bump choux casks
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: macos-latest
     steps:
-      - name: Resolve version and channel
+      - name: Resolve version and casks
         env:
           TAG: ${{ github.event.release.tag_name }}
           PRERELEASE: ${{ github.event.release.prerelease }}
@@ -21,11 +26,9 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
           if [ "$PRERELEASE" = "true" ]; then
-            echo "CASK_TOKEN=choux@rc" >> "$GITHUB_ENV"
-            echo "CASK_FILE=choux@rc.rb" >> "$GITHUB_ENV"
+            echo "CASKS=choux@rc" >> "$GITHUB_ENV"
           else
-            echo "CASK_TOKEN=choux" >> "$GITHUB_ENV"
-            echo "CASK_FILE=choux.rb" >> "$GITHUB_ENV"
+            echo "CASKS=choux choux@rc" >> "$GITHUB_ENV"
           fi
 
       - name: Download arm64 DMG
@@ -55,37 +58,49 @@ jobs:
 
       - name: Bump version and checksum
         run: |
-          cask="tap/Casks/$CASK_FILE"
-          test -f "$cask" || { echo "::error::$cask not found in tap"; exit 1; }
-          sed -i '' -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$cask"
-          sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$cask"
-          grep -q "version \"$VERSION\"" "$cask" || { echo "::error::version not applied"; exit 1; }
-          grep -q "sha256 \"$SHA256\"" "$cask" || { echo "::error::sha256 not applied"; exit 1; }
-          git -C tap --no-pager diff -- "Casks/$CASK_FILE"
+          for token in $CASKS; do
+            cask="tap/Casks/$token.rb"
+            test -f "$cask" || { echo "::error::$cask not found in tap"; exit 1; }
+            sed -i '' -E "s|^  version \".*\"$|  version \"$VERSION\"|" "$cask"
+            sed -i '' -E "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$cask"
+            grep -q "version \"$VERSION\"" "$cask" || { echo "::error::version not applied to $token"; exit 1; }
+            grep -q "sha256 \"$SHA256\"" "$cask" || { echo "::error::sha256 not applied to $token"; exit 1; }
+            git -C tap --no-pager diff -- "Casks/$token.rb"
+          done
 
       - name: Verify only version and checksum changed
         run: |
-          changed="$(git -C tap diff --numstat -- "Casks/$CASK_FILE" | awk '{print $1"/"$2}')"
-          case "$changed" in
-            ""|"2/2"|"1/1") ;;
-            *) echo "::error::unexpected cask diff ($changed lines added/removed)"; exit 1 ;;
-          esac
+          for token in $CASKS; do
+            changed="$(git -C tap diff --numstat -- "Casks/$token.rb" | awk '{print $1"/"$2}')"
+            case "$changed" in
+              ""|"2/2"|"1/1") ;;
+              *) echo "::error::unexpected $token diff ($changed lines added/removed)"; exit 1 ;;
+            esac
+          done
 
-      - name: Audit cask
+      - name: Audit casks
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           brew tap pty-server/tap
-          cp "tap/Casks/$CASK_FILE" "$(brew --repository pty-server/tap)/Casks/$CASK_FILE"
-          brew audit --cask --strict --online "pty-server/tap/$CASK_TOKEN"
+          for token in $CASKS; do
+            cp "tap/Casks/$token.rb" "$(brew --repository pty-server/tap)/Casks/$token.rb"
+            brew audit --cask --strict --online "pty-server/tap/$token"
+          done
 
       - name: Commit and push
         run: |
-          if git -C tap diff --quiet -- "Casks/$CASK_FILE"; then
-            echo "$CASK_TOKEN already at $VERSION"
-            exit 0
-          fi
           git -C tap config user.name "choux-release"
           git -C tap config user.email "noreply@pty-server.dev"
-          git -C tap commit -m "chore($CASK_TOKEN): $VERSION" -- "Casks/$CASK_FILE"
-          git -C tap push
+          pushed=0
+          for token in $CASKS; do
+            if git -C tap diff --quiet -- "Casks/$token.rb"; then
+              echo "$token already at $VERSION"
+              continue
+            fi
+            git -C tap commit -m "chore($token): $VERSION" -- "Casks/$token.rb"
+            pushed=1
+          done
+          if [ "$pushed" = "1" ]; then
+            git -C tap push
+          fi

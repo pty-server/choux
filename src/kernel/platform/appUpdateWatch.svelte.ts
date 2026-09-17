@@ -1,4 +1,4 @@
-import type { AppUpdateState, AppUpdateStatus } from "../../registry/appUpdate";
+import { defaultUpdateChannel, type AppUpdateState, type AppUpdateStatus, type UpdateChannel } from "../../registry/appUpdate";
 import { getAppUpdateBridge, type AppUpdateBridge, type PendingAppUpdate } from "./appUpdate";
 
 export const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -7,6 +7,8 @@ export interface AppUpdateWatch extends AppUpdateState {
   start(): () => void;
   checkNow(): Promise<void>;
   install(): Promise<void>;
+  setChannel(next: UpdateChannel): void;
+  restoreChannel(next: UpdateChannel): void;
 }
 
 function errorMessage(error: unknown): string {
@@ -16,7 +18,10 @@ function errorMessage(error: unknown): string {
 export function createAppUpdateWatch(bridge: AppUpdateBridge | undefined): AppUpdateWatch {
   let currentVersion = $state<string>();
   let status = $state<AppUpdateStatus>({ phase: "idle" });
+  let channel = $state<UpdateChannel>(defaultUpdateChannel);
   let pending: PendingAppUpdate | undefined;
+  /** Bumped whenever the channel changes, so a reply from the old channel is dropped. */
+  let generation = 0;
 
   function isBusy(): boolean {
     return status.phase === "checking" || status.phase === "installing";
@@ -29,9 +34,11 @@ export function createAppUpdateWatch(bridge: AppUpdateBridge | undefined): AppUp
 
   async function checkInBackground(): Promise<void> {
     if (!bridge || isBusy()) return;
+    const asked = generation;
     try {
-      const update = await bridge.check();
-      if (update && !isBusy()) offer(update);
+      const update = await bridge.check(channel);
+      if (asked !== generation || isBusy()) return;
+      if (update) offer(update);
     } catch {
       return;
     }
@@ -39,12 +46,15 @@ export function createAppUpdateWatch(bridge: AppUpdateBridge | undefined): AppUp
 
   async function checkNow(): Promise<void> {
     if (!bridge || isBusy()) return;
+    const asked = generation;
     status = { phase: "checking" };
     try {
-      const update = await bridge.check();
+      const update = await bridge.check(channel);
+      if (asked !== generation) return;
       if (update) offer(update);
       else status = { phase: "current" };
     } catch (error) {
+      if (asked !== generation) return;
       status = { phase: "failed", version: pending?.version, message: errorMessage(error) };
     }
   }
@@ -72,6 +82,20 @@ export function createAppUpdateWatch(bridge: AppUpdateBridge | undefined): AppUp
     },
     get status() {
       return status;
+    },
+    get channel() {
+      return channel;
+    },
+    setChannel(next: UpdateChannel) {
+      if (channel === next) return;
+      generation += 1;
+      channel = next;
+      pending = undefined;
+      status = { phase: "idle" };
+      void checkNow();
+    },
+    restoreChannel(next: UpdateChannel) {
+      channel = next;
     },
     start() {
       if (!bridge) return () => {};

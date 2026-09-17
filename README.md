@@ -20,7 +20,7 @@ Terminal sessions that live on a server so you can attach to them from any devic
 brew install --cask pty-server/tap/choux
 ```
 
-Release candidates track prereleases on a separate channel:
+The `rc` Cask follows the same channel as the app's release-candidate updates - every release, prereleases included:
 
 ```bash
 brew install --cask pty-server/tap/choux@rc
@@ -41,6 +41,8 @@ Choux runs natively on Windows, while ptys runs inside WSL 2 - see [Connecting t
 ### Updates
 
 Choux checks GitHub Releases on launch and every 12 hours. When a new version is out, the top bar offers to install it and restart, and Settings has a manual check. Nothing downloads until you click. A `.deb` install asks for your password, because the package installs as root. On Windows the installer shows a progress window and reopens Choux.
+
+Settings has two update channels. **Stable** offers finished releases only. **Release candidates** offers every release as it ships, prereleases included. Switching channel takes effect immediately and checks again; it never downgrades you, so moving back to Stable leaves a prerelease in place until the next stable release passes it.
 
 ## Connecting to ptys
 

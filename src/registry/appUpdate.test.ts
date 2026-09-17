@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { appUpdateButtonLabel, appUpdateStatusText, installableUpdateVersion } from "./appUpdate";
+import {
+  appUpdateButtonLabel,
+  appUpdateStatusText,
+  defaultUpdateChannel,
+  installableUpdateVersion,
+  normalizeUpdateChannel,
+  updateChannelDescription,
+  updateChannelLabel,
+} from "./appUpdate";
 
 describe("appUpdateButtonLabel", () => {
   it("offers the available version", () => {
@@ -35,5 +43,27 @@ describe("installableUpdateVersion", () => {
 describe("appUpdateStatusText", () => {
   it("carries the failure message", () => {
     expect(appUpdateStatusText({ phase: "failed", version: undefined, message: "offline" })).toBe("Update failed: offline");
+  });
+});
+
+describe("normalizeUpdateChannel", () => {
+  it("keeps a known channel", () => {
+    expect(normalizeUpdateChannel("rc")).toBe("rc");
+    expect(normalizeUpdateChannel("stable")).toBe("stable");
+  });
+
+  it("falls back to stable for anything else, so a corrupt setting cannot opt someone into prereleases", () => {
+    expect(defaultUpdateChannel).toBe("stable");
+    for (const value of [undefined, null, "", "nightly", 2, {}, ["rc"]]) {
+      expect(normalizeUpdateChannel(value)).toBe("stable");
+    }
+  });
+});
+
+describe("update channel wording", () => {
+  it("names and describes both channels differently", () => {
+    expect(updateChannelLabel("stable")).not.toBe(updateChannelLabel("rc"));
+    expect(updateChannelDescription("stable")).not.toBe(updateChannelDescription("rc"));
+    expect(updateChannelDescription("rc")).toContain("prerelease");
   });
 });
